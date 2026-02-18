@@ -3,23 +3,32 @@ package ui
 import (
 	"fmt"
 	"strings"
+
+	"github.com/charmbracelet/bubbles/textarea"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // QueryModal handles query/filter editing
 type QueryModal struct {
 	visible     bool
-	input       string
-	cursorPos   int
+	editor      textarea.Model
 	selectAll   bool
 	suggestions []string
 }
 
 // NewQueryModal creates a new query modal
 func NewQueryModal() *QueryModal {
+	ed := textarea.New()
+	ed.Prompt = ""
+	ed.Placeholder = ""
+	ed.ShowLineNumbers = false
+	ed.SetWidth(120)
+	ed.SetHeight(8)
+	ed.Focus()
+
 	return &QueryModal{
 		visible:   false,
-		input:     "",
-		cursorPos: 0,
+		editor:    ed,
 		selectAll: false,
 		suggestions: []string{
 			"severity=ERROR",
@@ -35,16 +44,23 @@ func NewQueryModal() *QueryModal {
 // Show displays the modal
 func (qm *QueryModal) Show() {
 	qm.visible = true
+	qm.editor.Focus()
 }
 
 // Hide hides the modal
 func (qm *QueryModal) Hide() {
 	qm.visible = false
+	qm.editor.Blur()
 }
 
 // IsVisible returns if modal is shown
 func (qm *QueryModal) IsVisible() bool {
 	return qm.visible
+}
+
+// SelectAllActive returns whether full-text selection is active.
+func (qm *QueryModal) SelectAllActive() bool {
+	return qm.selectAll
 }
 
 // HandleKey processes keyboard input
@@ -54,77 +70,69 @@ func (qm *QueryModal) HandleKey(key string) {
 		case "left", "right", "up", "down", "home", "end", "line-home", "line-end", "word-left", "word-right":
 			qm.selectAll = false
 		case "backspace", "delete":
-			qm.input = ""
-			qm.cursorPos = 0
+			qm.editor.SetValue("")
+			qm.editor.CursorStart()
 			qm.selectAll = false
 			return
 		default:
-			if key == "newline" || key == "\r" || len(key) == 1 {
-				qm.input = ""
-				qm.cursorPos = 0
+			if key == "newline" || len(key) == 1 {
+				qm.editor.SetValue("")
+				qm.editor.CursorStart()
 				qm.selectAll = false
 			}
 		}
 	}
 
 	switch key {
-	case "\r":
-		// Normalize CR from CRLF clipboard pastes.
-		qm.input = qm.input[:qm.cursorPos] + "\n" + qm.input[qm.cursorPos:]
-		qm.cursorPos++
 	case "newline":
-		qm.input = qm.input[:qm.cursorPos] + "\n" + qm.input[qm.cursorPos:]
-		qm.cursorPos++
+		qm.editor.InsertString("\n")
+		qm.selectAll = false
 	case "backspace":
-		if qm.cursorPos > 0 {
-			qm.input = qm.input[:qm.cursorPos-1] + qm.input[qm.cursorPos:]
-			qm.cursorPos--
-		}
+		qm.applyKeyMsg(tea.KeyMsg{Type: tea.KeyBackspace})
+		qm.selectAll = false
 	case "delete":
-		if qm.cursorPos < len(qm.input) {
-			qm.input = qm.input[:qm.cursorPos] + qm.input[qm.cursorPos+1:]
-		}
+		qm.applyKeyMsg(tea.KeyMsg{Type: tea.KeyDelete})
+		qm.selectAll = false
 	case "left":
-		if qm.cursorPos > 0 {
-			qm.cursorPos--
-		}
+		qm.applyKeyMsg(tea.KeyMsg{Type: tea.KeyLeft})
 	case "right":
-		if qm.cursorPos < len(qm.input) {
-			qm.cursorPos++
-		}
+		qm.applyKeyMsg(tea.KeyMsg{Type: tea.KeyRight})
 	case "up":
-		qm.moveVertical(-1)
+		qm.applyKeyMsg(tea.KeyMsg{Type: tea.KeyUp})
 	case "down":
-		qm.moveVertical(1)
+		qm.applyKeyMsg(tea.KeyMsg{Type: tea.KeyDown})
 	case "home":
-		qm.cursorPos = 0
+		qm.applyKeyMsg(tea.KeyMsg{Type: tea.KeyHome})
 	case "end":
-		qm.cursorPos = len(qm.input)
+		qm.applyKeyMsg(tea.KeyMsg{Type: tea.KeyEnd})
 	case "line-home":
-		qm.cursorPos = qm.currentLineStart()
-		qm.selectAll = false
+		qm.setCursorIndex(qm.currentLineStart())
 	case "line-end":
-		qm.cursorPos = qm.currentLineEnd()
-		qm.selectAll = false
+		qm.setCursorIndex(qm.currentLineEnd())
 	case "select-all":
-		qm.cursorPos = len(qm.input)
 		qm.selectAll = true
+		qm.editor.CursorEnd()
 	case "word-left":
-		qm.cursorPos = qm.wordLeft(qm.cursorPos)
-		qm.selectAll = false
+		qm.setCursorIndex(qm.wordLeft(qm.currentCursorIndex()))
 	case "word-right":
-		qm.cursorPos = qm.wordRight(qm.cursorPos)
-		qm.selectAll = false
+		qm.setCursorIndex(qm.wordRight(qm.currentCursorIndex()))
 	case "delete-word-left":
-		start := qm.wordLeft(qm.cursorPos)
-		if start < qm.cursorPos {
-			qm.input = qm.input[:start] + qm.input[qm.cursorPos:]
-			qm.cursorPos = start
+		val := qm.editor.Value()
+		cursor := qm.currentCursorIndex()
+		start := qm.wordLeft(cursor)
+		if start < cursor {
+			val = val[:start] + val[cursor:]
+			qm.editor.SetValue(val)
+			qm.setCursorIndex(start)
 		}
 	case "delete-word-right":
-		end := qm.wordRight(qm.cursorPos)
-		if end > qm.cursorPos {
-			qm.input = qm.input[:qm.cursorPos] + qm.input[end:]
+		val := qm.editor.Value()
+		cursor := qm.currentCursorIndex()
+		end := qm.wordRight(cursor)
+		if end > cursor {
+			val = val[:cursor] + val[end:]
+			qm.editor.SetValue(val)
+			qm.setCursorIndex(cursor)
 		}
 	case "toggle-comment":
 		qm.toggleCommentOnCurrentLine()
@@ -135,34 +143,42 @@ func (qm *QueryModal) HandleKey(key string) {
 	case "unindent":
 		qm.unindentCurrentLine()
 	default:
-		// Handle regular character input
-		if len(key) == 1 {
-			qm.input = qm.input[:qm.cursorPos] + key + qm.input[qm.cursorPos:]
-			qm.cursorPos++
+		if len([]rune(key)) == 1 {
+			qm.applyKeyMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
 			qm.selectAll = false
 		}
 	}
 }
 
+func (qm *QueryModal) applyKeyMsg(msg tea.KeyMsg) {
+	model, _ := qm.editor.Update(msg)
+	qm.editor = model
+}
+
 // GetInput returns the current query input
 func (qm *QueryModal) GetInput() string {
-	return qm.input
+	return qm.editor.Value()
 }
 
 // GetInputWithCursor returns input with a visible cursor marker at current position.
 func (qm *QueryModal) GetInputWithCursor() string {
-	if qm.cursorPos <= len(qm.input) {
-		return qm.input[:qm.cursorPos] + "│" + qm.input[qm.cursorPos:]
+	input := qm.editor.Value()
+	idx := qm.currentCursorIndex()
+	if idx < 0 {
+		idx = 0
 	}
-	return qm.input + "│"
+	if idx > len(input) {
+		idx = len(input)
+	}
+	return input[:idx] + "│" + input[idx:]
 }
 
 // SetInput sets the query input
 func (qm *QueryModal) SetInput(input string) {
 	input = strings.ReplaceAll(input, "\r\n", "\n")
 	input = strings.ReplaceAll(input, "\r", "\n")
-	qm.input = input
-	qm.cursorPos = len(input)
+	qm.editor.SetValue(input)
+	qm.editor.CursorEnd()
 	qm.selectAll = false
 }
 
@@ -181,35 +197,12 @@ func (qm *QueryModal) Render(width, height int) string {
 	}
 
 	var sb strings.Builder
-
-	// Title
 	sb.WriteString("┏━━ QUERY EDITOR " + strings.Repeat("━", width-18) + "\n")
-
-	// Input line with cursor
-	inputDisplay := qm.input
-	if qm.cursorPos <= len(inputDisplay) {
-		inputDisplay = qm.input[:qm.cursorPos] + "│" + qm.input[qm.cursorPos:]
-	} else {
-		inputDisplay = qm.input + "│"
-	}
-	lines := strings.Split(inputDisplay, "\n")
-	maxInputLines := 6
 	sb.WriteString("┃ Filter:\n")
-	for i, ln := range lines {
-		if i >= maxInputLines {
-			sb.WriteString("┃   ...\n")
-			break
-		}
-		if len(ln) > width-8 {
-			ln = ln[:width-11] + "..."
-		}
+	for _, ln := range wrapMultiline(qm.GetInputWithCursor(), maxInt(20, width-8), 6) {
 		sb.WriteString(fmt.Sprintf("┃   %s\n", ln))
 	}
-
-	// Separator
 	sb.WriteString("┣" + strings.Repeat("━", width-1) + "\n")
-
-	// Suggestions
 	sb.WriteString("┃ Suggestions:\n")
 	for i, sugg := range qm.suggestions {
 		if i >= 4 {
@@ -217,44 +210,46 @@ func (qm *QueryModal) Render(width, height int) string {
 		}
 		sb.WriteString("┃   • " + sugg + "\n")
 	}
-
-	// Help
 	sb.WriteString("┣" + strings.Repeat("━", width-1) + "\n")
 	if qm.selectAll {
 		sb.WriteString("┃ Selection: all query text\n")
 	}
 	sb.WriteString("┃ Enter run | Ctrl+A all | Ctrl+/ comment | Ctrl+R history | Ctrl+left/right word\n")
-
 	return sb.String()
 }
 
 // Clear clears the input
 func (qm *QueryModal) Clear() {
-	qm.input = ""
-	qm.cursorPos = 0
+	qm.editor.SetValue("")
+	qm.editor.CursorStart()
 	qm.selectAll = false
 }
 
-func (qm *QueryModal) moveVertical(delta int) {
-	currentLine, currentCol := lineColAt(qm.input, qm.cursorPos)
-	targetLine := currentLine + delta
-	if targetLine < 0 {
-		targetLine = 0
+func (qm *QueryModal) currentCursorIndex() int {
+	val := qm.editor.Value()
+	if val == "" {
+		return 0
 	}
+	line := qm.editor.Line()
+	col := qm.editor.LineInfo().CharOffset
+	lines := strings.Split(val, "\n")
+	if line < 0 {
+		line = 0
+	}
+	if line >= len(lines) {
+		line = len(lines) - 1
+	}
+	return indexAtLineCol(lines, line, col)
+}
 
-	lines := strings.Split(qm.input, "\n")
-	if targetLine >= len(lines) {
-		targetLine = len(lines) - 1
+func (qm *QueryModal) setCursorIndex(cursor int) {
+	val := qm.editor.Value()
+	line, col := lineColAt(val, cursor)
+	qm.editor.CursorStart()
+	for i := 0; i < line; i++ {
+		qm.editor.CursorDown()
 	}
-	if targetLine < 0 {
-		targetLine = 0
-	}
-
-	targetCol := currentCol
-	if targetCol > len(lines[targetLine]) {
-		targetCol = len(lines[targetLine])
-	}
-	qm.cursorPos = indexAtLineCol(lines, targetLine, targetCol)
+	qm.editor.SetCursor(col)
 }
 
 func lineColAt(input string, cursor int) (int, int) {
@@ -305,10 +300,11 @@ func indexAtLineCol(lines []string, targetLine, targetCol int) int {
 }
 
 func (qm *QueryModal) currentLineStart() int {
-	if qm.cursorPos <= 0 {
+	cursor := qm.currentCursorIndex()
+	if cursor <= 0 {
 		return 0
 	}
-	before := qm.input[:qm.cursorPos]
+	before := qm.editor.Value()[:cursor]
 	idx := strings.LastIndex(before, "\n")
 	if idx < 0 {
 		return 0
@@ -317,117 +313,166 @@ func (qm *QueryModal) currentLineStart() int {
 }
 
 func (qm *QueryModal) currentLineEnd() int {
-	if qm.cursorPos >= len(qm.input) {
-		return len(qm.input)
+	cursor := qm.currentCursorIndex()
+	input := qm.editor.Value()
+	if cursor >= len(input) {
+		return len(input)
 	}
-	rest := qm.input[qm.cursorPos:]
-	idx := strings.Index(rest, "\n")
-	if idx < 0 {
-		return len(qm.input)
+	after := input[cursor:]
+	rel := strings.Index(after, "\n")
+	if rel < 0 {
+		return len(input)
 	}
-	return qm.cursorPos + idx
-}
-
-func (qm *QueryModal) currentLineBounds() (int, int) {
-	start := qm.currentLineStart()
-	end := qm.currentLineEnd()
-	return start, end
-}
-
-func (qm *QueryModal) toggleCommentOnCurrentLine() {
-	start, end := qm.currentLineBounds()
-	line := qm.input[start:end]
-	trimmed := strings.TrimLeft(line, " \t")
-	indentLen := len(line) - len(trimmed)
-	indent := line[:indentLen]
-	switch {
-	case strings.HasPrefix(trimmed, "-- "):
-		trimmed = strings.TrimPrefix(trimmed, "-- ")
-	case strings.HasPrefix(trimmed, "--"):
-		trimmed = strings.TrimPrefix(trimmed, "--")
-	case strings.HasPrefix(trimmed, "# "):
-		trimmed = strings.TrimPrefix(trimmed, "# ")
-	case strings.HasPrefix(trimmed, "#"):
-		trimmed = strings.TrimPrefix(trimmed, "#")
-	default:
-		trimmed = "-- " + trimmed
-	}
-	updated := indent + trimmed
-	qm.input = qm.input[:start] + updated + qm.input[end:]
-	if qm.cursorPos > end {
-		qm.cursorPos += len(updated) - len(line)
-	} else if qm.cursorPos >= start {
-		qm.cursorPos = minInt(start+len(updated), len(qm.input))
-	}
-}
-
-func (qm *QueryModal) duplicateCurrentLine() {
-	start, end := qm.currentLineBounds()
-	line := qm.input[start:end]
-	insert := "\n" + line
-	if end < len(qm.input) {
-		insert = "\n" + line
-	}
-	qm.input = qm.input[:end] + insert + qm.input[end:]
-	qm.cursorPos = end + len(insert)
-}
-
-func (qm *QueryModal) indentCurrentLine() {
-	start, _ := qm.currentLineBounds()
-	qm.input = qm.input[:start] + "  " + qm.input[start:]
-	if qm.cursorPos >= start {
-		qm.cursorPos += 2
-	}
-}
-
-func (qm *QueryModal) unindentCurrentLine() {
-	start, end := qm.currentLineBounds()
-	line := qm.input[start:end]
-	remove := 0
-	if strings.HasPrefix(line, "  ") {
-		remove = 2
-	} else if strings.HasPrefix(line, "\t") || strings.HasPrefix(line, " ") {
-		remove = 1
-	}
-	if remove == 0 {
-		return
-	}
-	qm.input = qm.input[:start] + line[remove:] + qm.input[end:]
-	if qm.cursorPos > start {
-		qm.cursorPos = maxInt(start, qm.cursorPos-remove)
-	}
+	return cursor + rel
 }
 
 func (qm *QueryModal) wordLeft(pos int) int {
+	input := qm.editor.Value()
 	if pos <= 0 {
 		return 0
 	}
-	i := pos
-	for i > 0 && isWordBoundary(qm.input[i-1]) {
+	i := pos - 1
+	for i >= 0 && isWordDelimiter(input[i]) {
 		i--
 	}
-	for i > 0 && !isWordBoundary(qm.input[i-1]) {
+	for i >= 0 && !isWordDelimiter(input[i]) {
 		i--
 	}
-	return i
+	return i + 1
 }
 
 func (qm *QueryModal) wordRight(pos int) int {
-	if pos >= len(qm.input) {
-		return len(qm.input)
+	input := qm.editor.Value()
+	if pos >= len(input) {
+		return len(input)
 	}
 	i := pos
-	for i < len(qm.input) && isWordBoundary(qm.input[i]) {
+	for i < len(input) && isWordDelimiter(input[i]) {
 		i++
 	}
-	for i < len(qm.input) && !isWordBoundary(qm.input[i]) {
+	for i < len(input) && !isWordDelimiter(input[i]) {
 		i++
 	}
 	return i
 }
 
-func isWordBoundary(ch byte) bool {
-	return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' ||
-		ch == '(' || ch == ')' || ch == '[' || ch == ']' || ch == '{' || ch == '}' ||
-		ch == '"' || ch == '\'' || ch == ',' || ch == ':' || ch == ';' || ch == '='
+func isWordDelimiter(b byte) bool {
+	switch b {
+	case ' ', '\t', '\n', '(', ')', '{', '}', '[', ']', ':', ',', '=', '"', '\'', '|':
+		return true
+	default:
+		return false
+	}
+}
+
+func (qm *QueryModal) toggleCommentOnCurrentLine() {
+	input := qm.editor.Value()
+	cursor := qm.currentCursorIndex()
+	line, col := lineColAt(input, cursor)
+	lines := strings.Split(input, "\n")
+	if line < 0 || line >= len(lines) {
+		return
+	}
+
+	current := lines[line]
+	trimmed := strings.TrimLeft(current, " ")
+	indent := len(current) - len(trimmed)
+	commentAdded := false
+	commentRemoved := false
+
+	switch {
+	case strings.HasPrefix(trimmed, "-- "):
+		trimmed = strings.TrimPrefix(trimmed, "-- ")
+		commentRemoved = true
+	case strings.HasPrefix(trimmed, "# "):
+		trimmed = strings.TrimPrefix(trimmed, "# ")
+		commentRemoved = true
+	case strings.HasPrefix(trimmed, "--"):
+		trimmed = strings.TrimPrefix(trimmed, "--")
+		trimmed = strings.TrimPrefix(trimmed, " ")
+		commentRemoved = true
+	case strings.HasPrefix(trimmed, "#"):
+		trimmed = strings.TrimPrefix(trimmed, "#")
+		trimmed = strings.TrimPrefix(trimmed, " ")
+		commentRemoved = true
+	default:
+		trimmed = "-- " + trimmed
+		commentAdded = true
+	}
+
+	lines[line] = strings.Repeat(" ", indent) + trimmed
+	out := strings.Join(lines, "\n")
+	newCol := col
+	if commentAdded && col >= indent {
+		newCol += 3
+	}
+	if commentRemoved {
+		if col >= indent+3 {
+			newCol -= 3
+		} else if col > indent {
+			newCol = indent
+		}
+	}
+	qm.editor.SetValue(out)
+	qm.setCursorIndex(indexAtLineCol(strings.Split(out, "\n"), line, newCol))
+}
+
+func (qm *QueryModal) duplicateCurrentLine() {
+	input := qm.editor.Value()
+	cursor := qm.currentCursorIndex()
+	line, col := lineColAt(input, cursor)
+	lines := strings.Split(input, "\n")
+	if line < 0 || line >= len(lines) {
+		return
+	}
+
+	dup := lines[line]
+	newLines := make([]string, 0, len(lines)+1)
+	newLines = append(newLines, lines[:line+1]...)
+	newLines = append(newLines, dup)
+	if line+1 < len(lines) {
+		newLines = append(newLines, lines[line+1:]...)
+	}
+	out := strings.Join(newLines, "\n")
+	qm.editor.SetValue(out)
+	qm.setCursorIndex(indexAtLineCol(newLines, line+1, col))
+}
+
+func (qm *QueryModal) indentCurrentLine() {
+	input := qm.editor.Value()
+	cursor := qm.currentCursorIndex()
+	line, col := lineColAt(input, cursor)
+	lines := strings.Split(input, "\n")
+	if line < 0 || line >= len(lines) {
+		return
+	}
+	lines[line] = "  " + lines[line]
+	out := strings.Join(lines, "\n")
+	qm.editor.SetValue(out)
+	qm.setCursorIndex(indexAtLineCol(lines, line, col+2))
+}
+
+func (qm *QueryModal) unindentCurrentLine() {
+	input := qm.editor.Value()
+	cursor := qm.currentCursorIndex()
+	line, col := lineColAt(input, cursor)
+	lines := strings.Split(input, "\n")
+	if line < 0 || line >= len(lines) {
+		return
+	}
+	remove := 0
+	for remove < 2 && remove < len(lines[line]) && lines[line][remove] == ' ' {
+		remove++
+	}
+	if remove > 0 {
+		lines[line] = lines[line][remove:]
+		if col >= remove {
+			col -= remove
+		} else {
+			col = 0
+		}
+	}
+	out := strings.Join(lines, "\n")
+	qm.editor.SetValue(out)
+	qm.setCursorIndex(indexAtLineCol(lines, line, col))
 }

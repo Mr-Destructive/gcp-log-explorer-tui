@@ -20,6 +20,22 @@ import (
 
 var (
 	pythonBoolRegex = regexp.MustCompile(`\b(True|False|None)\b`)
+	ansiEscapeRegex = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+)
+
+const (
+	colorGCPBlue       = "33"
+	colorGCPBlueDark   = "24"
+	colorGCPBlueLight  = "117"
+	colorGCPGreen      = "42"
+	colorGCPWarn       = "220"
+	colorGCPError      = "203"
+	colorNeutralText   = "252"
+	colorNeutralSubtle = "244"
+	colorSelectionBG   = "25"
+	colorSelectionFG   = "230"
+	colorBadgeTextDark = "16"
+	colorBadgeTextLite = "230"
 )
 
 // App represents the main TUI application
@@ -42,6 +58,9 @@ type App struct {
 	previousModalName       string
 	vimMode                 bool
 	timezoneMode            string // "utc" or "local"
+	logOrder                string // "latest_bottom" or "latest_top"
+	keyModeCursor           int
+	timezoneCursor          int
 	loadingOlder            bool
 	loadingNewer            bool
 	detailScroll            int
@@ -120,6 +139,9 @@ func NewApp(appState *models.AppState) *App {
 		previousModalName:       "none",
 		vimMode:                 true,
 		timezoneMode:            "utc",
+		logOrder:                "latest_bottom",
+		keyModeCursor:           0,
+		timezoneCursor:          0,
 		loadingOlder:            false,
 		loadingNewer:            false,
 		detailScroll:            0,
@@ -259,11 +281,56 @@ func (a *App) toggleTimezoneMode() {
 	a.lastErr = "Timezone: local"
 }
 
+func (a *App) toggleLogOrder() {
+	selectedKey := ""
+	if len(a.state.LogListState.Logs) > 0 {
+		selectedKey = logEntryKey(a.state.LogListState.Logs[a.currentSelectedIndex()])
+	}
+	if a.logOrder == "latest_bottom" {
+		a.logOrder = "latest_top"
+	} else {
+		a.logOrder = "latest_bottom"
+	}
+	a.state.LogListState.Logs = a.sortLogsForDisplay(a.state.LogListState.Logs)
+	if selectedKey != "" {
+		if idx, ok := a.findLogIndexByKey(selectedKey); ok {
+			a.panes.LogList.scrollOffset = idx
+		}
+	}
+	a.lastErr = "Log order: " + strings.ReplaceAll(a.logOrder, "_", " ")
+}
+
 func (a *App) displayTime(t time.Time) time.Time {
 	if a.timezoneMode == "local" {
 		return t.Local()
 	}
 	return t.UTC()
+}
+
+func (a *App) sortLogsForDisplay(logs []models.LogEntry) []models.LogEntry {
+	out := append([]models.LogEntry{}, logs...)
+	if len(out) < 2 {
+		return out
+	}
+	if a.logOrder == "latest_bottom" {
+		sort.SliceStable(out, func(i, j int) bool {
+			return out[i].Timestamp.Before(out[j].Timestamp)
+		})
+		return out
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].Timestamp.After(out[j].Timestamp)
+	})
+	return out
+}
+
+func (a *App) findLogIndexByKey(key string) (int, bool) {
+	for i, entry := range a.state.LogListState.Logs {
+		if logEntryKey(entry) == key {
+			return i, true
+		}
+	}
+	return 0, false
 }
 
 // SetQueryHistory sets initial query history (most recent first).
@@ -341,28 +408,33 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			a.lastErr = fmt.Sprintf("Query error: %v", msg.err)
 		} else {
+			orderedLogs := a.sortLogsForDisplay(msg.logs)
 			switch msg.mode {
 			case "append":
 				before := len(a.state.LogListState.Logs)
-				a.state.LogListState.Logs = mergeUniqueLogs(a.state.LogListState.Logs, msg.logs, false)
+				a.state.LogListState.Logs = mergeUniqueLogs(a.state.LogListState.Logs, orderedLogs, false)
 				if msg.preserveAnchor {
 					a.panes.LogList.scrollOffset = minInt(maxInt(0, msg.anchorOffset), maxInt(0, len(a.state.LogListState.Logs)-1))
 				}
-				a.lastErr = fmt.Sprintf("Loaded older logs: +%d", len(a.state.LogListState.Logs)-before)
+				a.lastErr = fmt.Sprintf("Loaded logs: +%d", len(a.state.LogListState.Logs)-before)
 			case "prepend":
 				before := len(a.state.LogListState.Logs)
-				a.state.LogListState.Logs = mergeUniqueLogs(a.state.LogListState.Logs, msg.logs, true)
+				a.state.LogListState.Logs = mergeUniqueLogs(a.state.LogListState.Logs, orderedLogs, true)
 				// Keep viewport near current context when prepending.
 				a.panes.LogList.scrollOffset += len(a.state.LogListState.Logs) - before
-				a.lastErr = fmt.Sprintf("Loaded newer logs: +%d", len(a.state.LogListState.Logs)-before)
+				a.lastErr = fmt.Sprintf("Loaded logs: +%d", len(a.state.LogListState.Logs)-before)
 			default:
-				a.state.LogListState.Logs = msg.logs
-				a.panes.LogList.scrollOffset = 0
-				if msg.fromCache {
-					a.lastErr = fmt.Sprintf("Query cache hit: %d logs", len(msg.logs))
+				a.state.LogListState.Logs = orderedLogs
+				if a.logOrder == "latest_bottom" {
+					a.panes.LogList.scrollOffset = maxInt(0, len(a.state.LogListState.Logs)-1)
 				} else {
-					a.lastErr = fmt.Sprintf("Query complete: %d logs", len(msg.logs))
-					a.storeQueryResultCache(msg.filter, msg.logs)
+					a.panes.LogList.scrollOffset = 0
+				}
+				if msg.fromCache {
+					a.lastErr = fmt.Sprintf("Query cache hit: %d logs", len(orderedLogs))
+				} else {
+					a.lastErr = fmt.Sprintf("Query complete: %d logs", len(orderedLogs))
+					a.storeQueryResultCache(msg.filter, orderedLogs)
 				}
 			}
 		}
@@ -438,15 +510,16 @@ func (a *App) View() string {
 	}
 
 	headerLines := strings.Count(header, "\n")
-	footerLines := 2
+	footerLines := 3
 	if a.lastErr != "" {
-		footerLines = 3
+		footerLines = 4
 	}
 	topBarLines := strings.Count(topBar, "\n")
 	timelineLines := strings.Count(timeline, "\n")
 	overhead := topBarLines + headerLines + footerLines + timelineLines + detailsLines
 
-	logsHeight := a.height - overhead - 2
+	screenHeight := maxInt(1, a.height-1)
+	logsHeight := screenHeight - overhead - 2
 	if logsHeight < 6 {
 		logsHeight = 6
 	}
@@ -469,24 +542,28 @@ func (a *App) View() string {
 	case "query":
 		// Query editor is rendered as a persistent top panel.
 	case "timeRange":
-		output = output + "\n" + a.renderTimePickerModal()
+		output = a.renderCenteredPopup(output, a.renderTimePickerModal())
 	case "severity":
-		output = output + "\n" + a.renderSeverityFilterModal()
+		output = a.renderCenteredPopup(output, a.renderSeverityFilterModal())
 	case "export":
-		output = output + "\n" + a.renderExportModal()
+		output = a.renderCenteredPopup(output, a.renderExportModal())
 	case "detailPopup":
-		output = output + "\n" + a.renderDetailPopup()
+		output = a.renderCenteredPopup(output, a.renderDetailPopup())
 	case "help":
-		output = a.helpModal.Render(a.width, a.height)
+		output = a.renderCenteredPopup(output, a.helpModal.Render(a.width, a.height))
 	case "projectPopup":
 		output = a.renderCenteredPopup(output, a.renderProjectDropdown())
 	case "queryLibrary":
 		output = a.renderCenteredPopup(output, a.renderQueryLibraryPopup())
 	case "queryHistory":
 		output = a.renderCenteredPopup(output, a.renderQueryHistoryPopup())
+	case "keyModePopup":
+		output = a.renderCenteredPopup(output, a.renderKeyModePopup())
+	case "timezonePopup":
+		output = a.renderCenteredPopup(output, a.renderTimezonePopup())
 	}
 
-	return output
+	return a.fitToViewport(output)
 }
 
 // handleKeyPress processes keyboard input
@@ -606,10 +683,65 @@ func (a *App) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a.applySelectedQueryHistoryEntry()
 		}
 		return a, nil
-	case "help":
-		// Help modal just dismisses on any key
-		if msg.String() == "esc" || msg.String() == "?" {
+	case "keyModePopup":
+		switch msg.String() {
+		case "esc":
 			a.activeModalName = "none"
+		case "j", "down":
+			a.keyModeCursor++
+			if a.keyModeCursor > 1 {
+				a.keyModeCursor = 1
+			}
+		case "k", "up":
+			a.keyModeCursor--
+			if a.keyModeCursor < 0 {
+				a.keyModeCursor = 0
+			}
+		case "enter":
+			a.vimMode = a.keyModeCursor == 1
+			if a.vimMode {
+				a.lastErr = "Key mode: vim"
+			} else {
+				a.lastErr = "Key mode: standard"
+			}
+			a.activeModalName = "none"
+		}
+		return a, nil
+	case "timezonePopup":
+		switch msg.String() {
+		case "esc":
+			a.activeModalName = "none"
+		case "j", "down":
+			a.timezoneCursor++
+			if a.timezoneCursor > 1 {
+				a.timezoneCursor = 1
+			}
+		case "k", "up":
+			a.timezoneCursor--
+			if a.timezoneCursor < 0 {
+				a.timezoneCursor = 0
+			}
+		case "enter":
+			if a.timezoneCursor == 0 {
+				a.timezoneMode = "utc"
+				a.formatter.SetUseLocalTime(false)
+				a.lastErr = "Timezone: UTC"
+			} else {
+				a.timezoneMode = "local"
+				a.formatter.SetUseLocalTime(true)
+				a.lastErr = "Timezone: local"
+			}
+			a.activeModalName = "none"
+		}
+		return a, nil
+	case "help":
+		switch msg.String() {
+		case "esc", "?":
+			a.activeModalName = "none"
+		case "tab", "right", "l", "j", "down":
+			a.helpModal.NextSection()
+		case "shift+tab", "left", "h", "k", "up":
+			a.helpModal.PrevSection()
 		}
 		return a, nil
 	}
@@ -717,15 +849,23 @@ func (a *App) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.state.StreamState.Enabled = !a.state.StreamState.Enabled
 		return a, nil
 	case "f6":
-		a.vimMode = !a.vimMode
 		if a.vimMode {
-			a.lastErr = "Key mode: vim"
+			a.keyModeCursor = 1
 		} else {
-			a.lastErr = "Key mode: standard"
+			a.keyModeCursor = 0
 		}
+		a.activeModalName = "keyModePopup"
 		return a, nil
 	case "f7":
-		a.toggleTimezoneMode()
+		if a.timezoneMode == "local" {
+			a.timezoneCursor = 1
+		} else {
+			a.timezoneCursor = 0
+		}
+		a.activeModalName = "timezonePopup"
+		return a, nil
+	case "f8":
+		a.toggleLogOrder()
 		return a, nil
 	case "ctrl+a":
 		a.autoLoadAll = !a.autoLoadAll
@@ -906,6 +1046,9 @@ func (a *App) handleQueryModalInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyDown:
 		a.queryModal.HandleKey("down")
 		return a, nil
+	case tea.KeySpace:
+		a.queryModal.HandleKey(" ")
+		return a, nil
 	}
 
 	switch msg.String() {
@@ -921,10 +1064,17 @@ func (a *App) handleScrollDown() (tea.Model, tea.Cmd) {
 	wasAtBottom := a.currentWindowStart() >= a.maxWindowStart()
 	anchor := a.currentSelectedIndex()
 	a.panes.LogList.ScrollDown()
-	if a.queryExec != nil && !a.loadingOlder && len(a.state.LogListState.Logs) > 0 && wasAtBottom {
-		a.loadingOlder = true
-		a.state.LogListState.IsLoading = true
-		return a, a.runQueryCmdWithAnchor(a.buildOlderFilter(), "append", true, anchor)
+	if a.queryExec != nil && len(a.state.LogListState.Logs) > 0 && wasAtBottom {
+		if a.logOrder == "latest_bottom" && !a.loadingNewer {
+			a.loadingNewer = true
+			a.state.LogListState.IsLoading = true
+			return a, a.runQueryCmdWithAnchor(a.buildNewerFilter(), "append", true, anchor)
+		}
+		if a.logOrder != "latest_bottom" && !a.loadingOlder {
+			a.loadingOlder = true
+			a.state.LogListState.IsLoading = true
+			return a, a.runQueryCmdWithAnchor(a.buildOlderFilter(), "append", true, anchor)
+		}
 	}
 	return a, nil
 }
@@ -932,10 +1082,17 @@ func (a *App) handleScrollDown() (tea.Model, tea.Cmd) {
 func (a *App) handleScrollUp() (tea.Model, tea.Cmd) {
 	prev := a.panes.LogList.scrollOffset
 	a.panes.LogList.ScrollUp()
-	if a.queryExec != nil && !a.loadingNewer && prev == 0 && len(a.state.LogListState.Logs) > 0 {
-		a.loadingNewer = true
-		a.state.LogListState.IsLoading = true
-		return a, a.runQueryCmd(a.buildNewerFilter(), "prepend")
+	if a.queryExec != nil && prev == 0 && len(a.state.LogListState.Logs) > 0 {
+		if a.logOrder == "latest_bottom" && !a.loadingOlder {
+			a.loadingOlder = true
+			a.state.LogListState.IsLoading = true
+			return a, a.runQueryCmd(a.buildOlderFilter(), "prepend")
+		}
+		if a.logOrder != "latest_bottom" && !a.loadingNewer {
+			a.loadingNewer = true
+			a.state.LogListState.IsLoading = true
+			return a, a.runQueryCmd(a.buildNewerFilter(), "prepend")
+		}
 	}
 	return a, nil
 }
@@ -1152,16 +1309,17 @@ func (a *App) handleExportInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (a *App) renderTimePickerModal() string {
 	presets := a.timePicker.GetPresets()
 	selectedIdx := a.timePicker.GetSelectedIdx()
+	popupWidth := minInt(maxInt(56, a.width-24), 120)
 
 	var sb strings.Builder
-	sb.WriteString("┏━━ TIME RANGE " + strings.Repeat("━", a.width-16) + "\n")
+	sb.WriteString(a.popupTop(popupWidth, "TIME RANGE"))
 
 	for i, preset := range presets {
 		prefix := "  "
 		if i == selectedIdx {
 			prefix = "▶ "
 		}
-		sb.WriteString(fmt.Sprintf("┃ %s%-20s\n", prefix, preset.Name))
+		sb.WriteString(a.popupLine(popupWidth, fmt.Sprintf("%s%-20s", prefix, preset.Name)))
 	}
 
 	if a.timePicker.IsCustomSelected() {
@@ -1174,26 +1332,28 @@ func (a *App) renderTimePickerModal() string {
 		} else {
 			endPrefix = "▶"
 		}
-		sb.WriteString("┣" + strings.Repeat("━", a.width-1) + "\n")
-		sb.WriteString("┃ Custom Range (UTC):\n")
-		sb.WriteString(fmt.Sprintf("┃ %s Start: %s\n", startPrefix, startInput))
-		sb.WriteString(fmt.Sprintf("┃ %s End:   %s\n", endPrefix, endInput))
+		sb.WriteString(a.popupSeparator(popupWidth, '━'))
+		sb.WriteString(a.popupLine(popupWidth, "Custom Range (UTC):"))
+		sb.WriteString(a.popupLine(popupWidth, fmt.Sprintf("%s Start: %s", startPrefix, startInput)))
+		sb.WriteString(a.popupLine(popupWidth, fmt.Sprintf("%s End:   %s", endPrefix, endInput)))
 	}
 
-	sb.WriteString("┣" + strings.Repeat("━", a.width-1) + "\n")
+	sb.WriteString(a.popupSeparator(popupWidth, '━'))
 	if a.timePicker.IsCustomSelected() {
-		sb.WriteString("┃ Type exact datetime (YYYY-MM-DD HH:MM:SS or RFC3339)\n")
-		sb.WriteString("┃ h/l/Tab switch field | c clear field | Backspace edit | Ctrl+u clear | j/k +/-15m | J/K +/-1h | Enter apply | Esc cancel\n")
+		sb.WriteString(a.popupLine(popupWidth, "Type exact datetime (YYYY-MM-DD HH:MM:SS or RFC3339)"))
+		sb.WriteString(a.popupLine(popupWidth, "h/l/Tab switch field | c clear | Backspace edit | Ctrl+u clear | j/k +/-15m | J/K +/-1h"))
+		sb.WriteString(a.popupLine(popupWidth, "Enter apply | Esc cancel"))
 	} else {
-		sb.WriteString("┃ Press j/k to navigate, Enter to select, Esc to cancel\n")
+		sb.WriteString(a.popupLine(popupWidth, "Press j/k to navigate, Enter to select, Esc to cancel"))
 	}
 
 	if errMsg := a.timePicker.GetError(); errMsg != "" {
-		if len(errMsg) > a.width-6 {
-			errMsg = errMsg[:a.width-9] + "..."
+		if len(errMsg) > popupWidth-6 {
+			errMsg = errMsg[:popupWidth-9] + "..."
 		}
-		sb.WriteString(fmt.Sprintf("┃ Error: %s\n", errMsg))
+		sb.WriteString(a.popupLine(popupWidth, "Error: "+errMsg))
 	}
+	sb.WriteString(a.popupBottom(popupWidth, '━'))
 
 	return sb.String()
 }
@@ -1202,11 +1362,12 @@ func (a *App) renderTimePickerModal() string {
 func (a *App) renderSeverityFilterModal() string {
 	levels := a.severityFilter.GetSeverityLevels()
 	mode := a.severityFilter.GetMode()
+	popupWidth := minInt(maxInt(56, a.width-24), 120)
 
 	var sb strings.Builder
-	sb.WriteString("┏━━ SEVERITY FILTER " + strings.Repeat("━", a.width-21) + "\n")
-	sb.WriteString(fmt.Sprintf("┃ Mode: %s (press 'm' to toggle)\n", mode))
-	sb.WriteString("┣" + strings.Repeat("━", a.width-1) + "\n")
+	sb.WriteString(a.popupTop(popupWidth, "SEVERITY FILTER"))
+	sb.WriteString(a.popupLine(popupWidth, fmt.Sprintf("Mode: %s (press 'm' to toggle)", mode)))
+	sb.WriteString(a.popupSeparator(popupWidth, '━'))
 
 	if mode == "individual" {
 		for i, level := range levels {
@@ -1222,12 +1383,12 @@ func (a *App) renderSeverityFilterModal() string {
 			if i == a.severityCursor {
 				levelText = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("24")).Render(levelText)
 			}
-			sb.WriteString(fmt.Sprintf("┃ %s\n", levelText))
+			sb.WriteString(a.popupLine(popupWidth, levelText))
 		}
-		sb.WriteString(fmt.Sprintf("┃ Selected: %d\n", a.severityFilter.CountSelectedLevels()))
+		sb.WriteString(a.popupLine(popupWidth, fmt.Sprintf("Selected: %d", a.severityFilter.CountSelectedLevels())))
 	} else {
 		minLevel := a.severityFilter.GetMinimumLevel()
-		sb.WriteString(fmt.Sprintf("┃ Minimum level: %s\n", minLevel))
+		sb.WriteString(a.popupLine(popupWidth, fmt.Sprintf("Minimum level: %s", minLevel)))
 		for i, level := range levels {
 			prefix := "  "
 			if i == a.severityCursor {
@@ -1241,13 +1402,14 @@ func (a *App) renderSeverityFilterModal() string {
 			if i == a.severityCursor {
 				levelText = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("24")).Render(levelText)
 			}
-			sb.WriteString(fmt.Sprintf("┃ %s\n", levelText))
+			sb.WriteString(a.popupLine(popupWidth, levelText))
 		}
-		sb.WriteString("┃ (Shows logs at this level and above)\n")
+		sb.WriteString(a.popupLine(popupWidth, "(Shows logs at this level and above)"))
 	}
 
-	sb.WriteString("┣" + strings.Repeat("━", a.width-1) + "\n")
-	sb.WriteString("┃ j/k: move | Space: toggle/set | m: mode | a: all | d: none | Enter: apply | Esc: cancel\n")
+	sb.WriteString(a.popupSeparator(popupWidth, '━'))
+	sb.WriteString(a.popupLine(popupWidth, "j/k move | Space toggle/set | m mode | a all | d none | Enter apply | Esc cancel"))
+	sb.WriteString(a.popupBottom(popupWidth, '━'))
 
 	return sb.String()
 }
@@ -1298,6 +1460,7 @@ func (a *App) renderExportModal() string {
 	sb.WriteString("┣" + strings.Repeat("━", a.width-1) + "\n")
 	sb.WriteString("┃ Files are saved in the current directory as logs_YYYYMMDD_HHMMSS.*\n")
 	sb.WriteString("┃ Press 1-4 to export, Esc to cancel\n")
+	sb.WriteString("┗" + strings.Repeat("━", a.width-1) + "┛\n")
 	return sb.String()
 }
 
@@ -1334,6 +1497,7 @@ func (a *App) renderDetailsModal() string {
 	}
 	sb.WriteString("┣" + strings.Repeat("━", a.width-1) + "\n")
 	sb.WriteString("┃ Esc/Enter: close\n")
+	sb.WriteString("┗" + strings.Repeat("━", a.width-1) + "┛\n")
 	return sb.String()
 }
 
@@ -1349,30 +1513,27 @@ func (a *App) renderGraphPanel() string {
 	info := dist["INFO"] + dist["NOTICE"] + dist["DEBUG"] + dist["DEFAULT"]
 	rangeText := "Range: n/a"
 	if len(a.state.LogListState.Logs) > 0 {
-		first := a.state.LogListState.Logs[0].Timestamp
-		last := a.state.LogListState.Logs[len(a.state.LogListState.Logs)-1].Timestamp
-		// Keep range in chronological order for readability.
-		if first.Before(last) {
-			first, last = last, first
-		}
-		rangeText = fmt.Sprintf("Range: %s -> %s", a.displayTime(last).Format("2006-01-02 15:04:05"), a.displayTime(first).Format("2006-01-02 15:04:05"))
+		oldest := a.oldestLoadedTimestamp()
+		newest := a.newestLoadedTimestamp()
+		rangeText = fmt.Sprintf("Range: %s -> %s", a.displayTime(oldest).Format("2006-01-02 15:04:05"), a.displayTime(newest).Format("2006-01-02 15:04:05"))
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("┣%s\n", strings.Repeat("─", a.width-1)))
-	sb.WriteString(fmt.Sprintf("┃ %s %s\n", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("117")).Render("Timeline"), spark))
-	sb.WriteString(fmt.Sprintf("┃ %s Critical:%d  Warning:%d  Info/Other:%d\n",
-		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Render("Severity Mix"),
-		crit, warn, info))
-	sb.WriteString(fmt.Sprintf("┃ %s\n", lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render(rangeText)))
+	sb.WriteString(a.panelSeparator('─'))
+	sb.WriteString(a.panelLine(fmt.Sprintf("%s %s", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorGCPBlueLight)).Render("Timeline"), spark)))
+	sb.WriteString(a.panelLine(fmt.Sprintf("%s Critical:%d  Warning:%d  Info/Other:%d",
+		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorGCPBlue)).Render("Severity Mix"),
+		crit, warn, info)))
+	sb.WriteString(a.panelLine(lipgloss.NewStyle().Foreground(lipgloss.Color(colorNeutralSubtle)).Render(rangeText)))
 	return sb.String()
 }
 
 func (a *App) renderLogsPanel(height int) (string, int, int) {
 	var sb strings.Builder
-	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("45")).Render("LOG STREAM")
-	sb.WriteString(fmt.Sprintf("┏ %s (%d) %s\n", title, len(a.state.LogListState.Logs), strings.Repeat("━", maxInt(0, a.width-18))))
-	sb.WriteString(fmt.Sprintf("┃ %s\n", lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("IDX   TIMESTAMP           SEV      MESSAGE")))
+	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorGCPBlueLight)).Render("LOG STREAM")
+	sb.WriteString(a.panelTop())
+	sb.WriteString(a.panelLine(fmt.Sprintf("%s (%d)", title, len(a.state.LogListState.Logs))))
+	sb.WriteString(a.panelLine(lipgloss.NewStyle().Foreground(lipgloss.Color(colorNeutralSubtle)).Render("IDX   TIMESTAMP           SEV      MESSAGE")))
 
 	visibleRows := maxInt(1, height-1)
 	start := a.currentWindowStart()
@@ -1398,16 +1559,14 @@ func (a *App) renderLogsPanel(height int) (string, int, int) {
 		row := fmt.Sprintf("%-4d  %s  %s  %s", i+1, timePart, sevBadge, msg)
 		if i == a.currentSelectedIndex() {
 			row = a.styleSelectedRow(row)
-		} else if i%2 == 0 {
-			row = lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Render(row)
 		} else {
-			row = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render(row)
+			row = a.styleSeverityRow(log.Severity, row)
 		}
-		sb.WriteString("┃ " + row + "\n")
+		sb.WriteString(a.panelLine(row))
 	}
 
 	for i := end - start; i < height-1; i++ {
-		sb.WriteString("┃ \n")
+		sb.WriteString(a.panelLine(""))
 	}
 	return sb.String(), start + 1, end
 }
@@ -1418,8 +1577,9 @@ func (a *App) renderQueryPanel(query string, editing bool) string {
 	if editing {
 		title = "QUERY EDITOR [EDITING]"
 	}
-	titleStyled := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("229")).Background(lipgloss.Color("63")).Padding(0, 1).Render(title)
-	sb.WriteString(fmt.Sprintf("┏ %s %s\n", titleStyled, strings.Repeat("━", maxInt(0, a.width-22))))
+	titleStyled := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("229")).Background(lipgloss.Color(colorGCPBlue)).Padding(0, 1).Render(title)
+	sb.WriteString(a.panelTop())
+	sb.WriteString(a.panelLine(titleStyled))
 
 	if strings.TrimSpace(query) == "" {
 		query = "No filter. Press q to edit."
@@ -1427,20 +1587,20 @@ func (a *App) renderQueryPanel(query string, editing bool) string {
 	maxQueryLines := minInt(16, maxInt(6, a.height/3))
 	lines := wrapMultiline(query, maxInt(30, a.width-6), maxQueryLines)
 	for _, line := range lines {
-		if editing && strings.Contains(line, "│") {
-			sb.WriteString("┃ " + lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("24")).Render(line) + "\n")
+		if editing && (strings.Contains(line, "│") || a.queryModal.SelectAllActive()) {
+			sb.WriteString(a.panelLine(lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color(colorGCPBlueDark)).Render(line)))
 		} else {
-			sb.WriteString("┃ " + lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Render(line) + "\n")
+			sb.WriteString(a.panelLine(lipgloss.NewStyle().Foreground(lipgloss.Color(colorNeutralText)).Render(line)))
 		}
 	}
 	hint := "Enter run | Ctrl+A all | Ctrl+/ comment | Ctrl+R history | Ctrl+S save | Ctrl+Y library"
-	sb.WriteString("┃ " + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(hint) + "\n")
+	sb.WriteString(a.panelLine(lipgloss.NewStyle().Foreground(lipgloss.Color(colorGCPBlueLight)).Render(hint)))
 	return sb.String()
 }
 
 func (a *App) renderStatusPanel(windowStart, windowEnd int) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("┣%s\n", strings.Repeat("━", a.width-1)))
+	sb.WriteString(a.panelSeparator('━'))
 	total := len(a.state.LogListState.Logs)
 	if total == 0 {
 		windowStart = 0
@@ -1459,16 +1619,72 @@ func (a *App) renderStatusPanel(windowStart, windowEnd int) string {
 		keyMode = "vim"
 	}
 	tzMode := strings.ToUpper(a.timezoneMode)
-	sb.WriteString(fmt.Sprintf("┃ %d-%d/%d  %s  sev:%s  load:%s  stream:%s  keys:%s  tz:%s  cache:%d  ?\n",
-		windowStart, windowEnd, total, a.getTimeRangeLabel(), a.getSeveritySummary(), loadMode, streamMode, keyMode, tzMode, len(a.cachedQueryRecords())))
+	sb.WriteString(a.panelLine(fmt.Sprintf("%d-%d/%d  %s  sev:%s  load:%s  stream:%s  keys:%s  tz:%s  order:%s  cache:%d  ?",
+		windowStart, windowEnd, total, a.getTimeRangeLabel(), a.getSeveritySummary(), loadMode, streamMode, keyMode, tzMode, a.logOrderLabel(), len(a.cachedQueryRecords()))))
 	if a.lastErr != "" {
 		errLine := a.lastErr
 		if len(errLine) > a.width-4 {
 			errLine = errLine[:a.width-7] + "..."
 		}
-		sb.WriteString("┃ " + lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render(errLine) + "\n")
+		sb.WriteString(a.panelLine(lipgloss.NewStyle().Foreground(lipgloss.Color(colorGCPError)).Render(errLine)))
 	}
+	sb.WriteString(a.panelBottom('━'))
 	return sb.String()
+}
+
+func (a *App) panelInnerWidth() int {
+	return maxInt(1, a.width-4)
+}
+
+func (a *App) panelTop() string {
+	return "┏" + strings.Repeat("━", maxInt(0, a.width-2)) + "┓\n"
+}
+
+func (a *App) panelSeparator(fill rune) string {
+	return "┣" + strings.Repeat(string(fill), maxInt(0, a.width-2)) + "┫\n"
+}
+
+func (a *App) panelBottom(fill rune) string {
+	return "┗" + strings.Repeat(string(fill), maxInt(0, a.width-2)) + "┛\n"
+}
+
+func (a *App) panelLine(content string) string {
+	content = strings.TrimSuffix(content, "\n")
+	line := lipgloss.NewStyle().
+		Width(a.panelInnerWidth()).
+		MaxWidth(a.panelInnerWidth()).
+		Render(content)
+	return "┃ " + line + " ┃\n"
+}
+
+func (a *App) popupInnerWidth(width int) int {
+	return maxInt(1, width-4)
+}
+
+func (a *App) popupTop(width int, title string) string {
+	label := " " + strings.TrimSpace(title) + " "
+	maxLabel := maxInt(0, width-2)
+	if lipgloss.Width(label) > maxLabel {
+		label = lipgloss.NewStyle().MaxWidth(maxLabel).Render(label)
+	}
+	return "┏" + label + strings.Repeat("━", maxInt(0, width-2-lipgloss.Width(label))) + "┓\n"
+}
+
+func (a *App) popupSeparator(width int, fill rune) string {
+	return "┣" + strings.Repeat(string(fill), maxInt(0, width-2)) + "┫\n"
+}
+
+func (a *App) popupBottom(width int, fill rune) string {
+	return "┗" + strings.Repeat(string(fill), maxInt(0, width-2)) + "┛\n"
+}
+
+func (a *App) popupLine(width int, content string) string {
+	content = strings.TrimSuffix(content, "\n")
+	line := lipgloss.NewStyle().
+		Width(a.popupInnerWidth(width)).
+		MaxWidth(a.popupInnerWidth(width)).
+		Render(content)
+	return "┃ " + line + " ┃\n"
 }
 
 func (a *App) renderTopBar() string {
@@ -1483,15 +1699,30 @@ func (a *App) renderTopBar() string {
 	if a.state.LogListState.IsLoading {
 		queryMode = "loading"
 	}
-	left := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("255")).Background(lipgloss.Color("27")).Padding(0, 1).Render("GCP Log Explorer")
 	keys := "std"
 	if a.vimMode {
 		keys = "vim"
 	}
-	rightText := fmt.Sprintf("project:%s ▾  mode:%s  keys:%s  tz:%s", project, queryMode, keys, strings.ToUpper(a.timezoneMode))
-	right := lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("31")).Padding(0, 1).Render(rightText)
-	fill := maxInt(0, a.width-lipgloss.Width(left)-lipgloss.Width(right))
-	return left + strings.Repeat(" ", fill) + right + "\n"
+	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorGCPBlueLight)).Render("GCP Log Explorer")
+	sep := lipgloss.NewStyle().Foreground(lipgloss.Color(colorNeutralSubtle)).Render(" | ")
+	metaStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(colorNeutralText))
+	line := title + sep + metaStyle.Render(fmt.Sprintf("project:%s", project)) +
+		sep + metaStyle.Render(fmt.Sprintf("mode:%s", queryMode)) +
+		sep + metaStyle.Render(fmt.Sprintf("load:%s", a.loadingStateShort())) +
+		sep + metaStyle.Render(fmt.Sprintf("keys:%s", keys)) +
+		sep + metaStyle.Render(fmt.Sprintf("tz:%s", strings.ToUpper(a.timezoneMode))) +
+		sep + metaStyle.Render(fmt.Sprintf("order:%s", a.logOrderLabel()))
+	if lipgloss.Width(line) > a.width {
+		if a.width > 3 {
+			line = line[:a.width-3] + "..."
+		} else {
+			line = line[:a.width]
+		}
+	}
+	if lipgloss.Width(line) < a.width {
+		line += strings.Repeat(" ", a.width-lipgloss.Width(line))
+	}
+	return line + "\n"
 }
 
 func (a *App) addQueryHistory(filter string) {
@@ -1590,6 +1821,29 @@ func (a *App) getLoadingStatus() string {
 	return "running query"
 }
 
+func (a *App) loadingStateShort() string {
+	if !a.state.LogListState.IsLoading {
+		return "idle"
+	}
+	if a.loadingOlder && a.loadingNewer {
+		return "older+newer"
+	}
+	if a.loadingOlder {
+		return "older"
+	}
+	if a.loadingNewer {
+		return "newer"
+	}
+	return "query"
+}
+
+func (a *App) logOrderLabel() string {
+	if a.logOrder == "latest_bottom" {
+		return "bottom"
+	}
+	return "top"
+}
+
 func sanitizeFilterForExecution(filter string) string {
 	filter = strings.ReplaceAll(filter, "\r\n", "\n")
 	filter = strings.ReplaceAll(filter, "\r", "\n")
@@ -1623,15 +1877,15 @@ func (a *App) renderDetailsPanel() string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("┣%s\n", strings.Repeat("─", a.width-1)))
-	sb.WriteString(fmt.Sprintf("┃ %s %d/%d\n", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("213")).Render("DETAILS"), idx+1, len(a.state.LogListState.Logs)))
+	sb.WriteString(a.panelSeparator('─'))
+	sb.WriteString(a.panelLine(fmt.Sprintf("%s %d/%d", lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("213")).Render("DETAILS"), idx+1, len(a.state.LogListState.Logs))))
 	for _, line := range lines {
 		if len(line) > a.width-4 {
 			line = line[:a.width-7] + "..."
 		}
-		sb.WriteString("┃ " + lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(line) + "\n")
+		sb.WriteString(a.panelLine(lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(line)))
 	}
-	sb.WriteString("┃ Esc/Enter/Ctrl+D: close | Ctrl+P: popup | Ctrl+O: open entry | Ctrl+L: open list\n")
+	sb.WriteString(a.panelLine("Esc/Enter/Ctrl+D: close | Ctrl+P: popup | Ctrl+O: open entry | Ctrl+L: open list"))
 	return sb.String()
 }
 
@@ -1641,8 +1895,9 @@ func (a *App) renderDetailPopup() string {
 		return ""
 	}
 
-	lines, selectedIndex := a.detailPopupLines(*entry)
-	visibleHeight := maxInt(8, a.height-8)
+	popupWidth := minInt(maxInt(88, a.width-18), 150)
+	lines, selectedIndex := a.detailPopupLines(*entry, popupWidth)
+	visibleHeight := maxInt(8, a.height-10)
 	start := a.detailScroll
 	if start < 0 {
 		start = 0
@@ -1656,48 +1911,43 @@ func (a *App) renderDetailPopup() string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString("┏━━ FULL LOG POPUP " + strings.Repeat("━", maxInt(0, a.width-19)) + "\n")
-	sb.WriteString(fmt.Sprintf("┃ Entry %d/%d  Mode:%s  Scroll %d/%d\n", a.currentSelectedIndex()+1, len(a.state.LogListState.Logs), a.detailViewMode, start+1, maxInt(1, len(lines))))
-	sb.WriteString("┣" + strings.Repeat("━", a.width-1) + "\n")
+	sb.WriteString(a.popupTop(popupWidth, "FULL LOG POPUP"))
+	sb.WriteString(a.popupLine(popupWidth, fmt.Sprintf("Entry %d/%d  Mode:%s  Scroll %d/%d", a.currentSelectedIndex()+1, len(a.state.LogListState.Logs), a.detailViewMode, start+1, maxInt(1, len(lines)))))
+	sb.WriteString(a.popupSeparator(popupWidth, '━'))
 	for i := start; i < end; i++ {
 		line := lines[i]
 		prefix := "  "
 		if i == selectedIndex {
 			prefix = "▶ "
 		}
-		if len(line) > a.width-4 {
-			line = line[:a.width-7] + "..."
-		}
-		sb.WriteString("┃ " + prefix + line + "\n")
+		sb.WriteString(a.popupLine(popupWidth, prefix+line))
 	}
 	for i := end; i < start+visibleHeight; i++ {
-		sb.WriteString("┃ \n")
+		sb.WriteString(a.popupLine(popupWidth, ""))
 	}
-	sb.WriteString("┣" + strings.Repeat("━", a.width-1) + "\n")
+	sb.WriteString(a.popupSeparator(popupWidth, '━'))
 	if selectedPath, selectedType := a.selectedDetailNodeInfo(); selectedPath != "" {
 		meta := fmt.Sprintf("selected:%s (%s)", selectedPath, selectedType)
-		if len(meta) > a.width-4 {
-			meta = meta[:a.width-7] + "..."
-		}
-		sb.WriteString("┃ " + meta + "\n")
+		sb.WriteString(a.popupLine(popupWidth, meta))
 	}
-	sb.WriteString("┃ j/k:move  h/l:collapse/expand  z/Z:collapse/expand all  v/tab:mode  y/Y:copy  Ctrl+E:open payload\n")
-	sb.WriteString("┃ Ctrl+O:open entry  Ctrl+L:open list(JSON)  Ctrl+Shift+L/Alt+L:open list(CSV)  Esc/Ctrl+P:close\n")
+	sb.WriteString(a.popupLine(popupWidth, "j/k:move  h/l:collapse/expand  z/Z:collapse/expand all  v/tab:mode  y/Y:copy  Ctrl+E:open payload"))
+	sb.WriteString(a.popupLine(popupWidth, "Ctrl+O:open entry  Ctrl+L:open list(JSON)  Ctrl+Shift+L/Alt+L:open list(CSV)  Esc/Ctrl+P:close"))
+	sb.WriteString(a.popupBottom(popupWidth, '━'))
 	return sb.String()
 }
 
 func (a *App) renderProjectDropdown() string {
 	var sb strings.Builder
 	popupWidth := minInt(maxInt(44, a.width-20), 100)
-	title := " PROJECT SELECTOR "
-	sb.WriteString("┏" + title + strings.Repeat("━", maxInt(0, popupWidth-len(title)-2)) + "\n")
+	sb.WriteString(a.popupTop(popupWidth, "PROJECT SELECTOR"))
 	if a.loadingProjects {
-		sb.WriteString("┃ Discovering projects from gcloud account...\n")
+		sb.WriteString(a.popupLine(popupWidth, "Discovering projects from gcloud account..."))
 	}
 	if len(a.availableProjects) == 0 {
-		sb.WriteString("┃ No projects discovered yet\n")
-		sb.WriteString("┣" + strings.Repeat("━", popupWidth-1) + "\n")
-		sb.WriteString("┃ Enter: switch project | Esc: cancel\n")
+		sb.WriteString(a.popupLine(popupWidth, "No projects discovered yet"))
+		sb.WriteString(a.popupSeparator(popupWidth, '━'))
+		sb.WriteString(a.popupLine(popupWidth, "Enter: switch project | Esc: cancel"))
+		sb.WriteString(a.popupBottom(popupWidth, '━'))
 		return sb.String()
 	}
 
@@ -1718,24 +1968,25 @@ func (a *App) renderProjectDropdown() string {
 			line = line[:popupWidth-7] + "..."
 		}
 		if i == a.projectCursor {
-			line = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Render(line)
+			line = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorSelectionFG)).Background(lipgloss.Color(colorSelectionBG)).Render(line)
 		}
-		sb.WriteString("┃ " + line + "\n")
+		sb.WriteString(a.popupLine(popupWidth, line))
 	}
-	sb.WriteString("┣" + strings.Repeat("━", popupWidth-1) + "\n")
-	sb.WriteString(fmt.Sprintf("┃ Showing %d-%d of %d | j/k move | Enter select | Esc close\n", start+1, end, len(a.availableProjects)))
+	sb.WriteString(a.popupSeparator(popupWidth, '━'))
+	sb.WriteString(a.popupLine(popupWidth, fmt.Sprintf("Showing %d-%d of %d | j/k move | Enter select | Esc close", start+1, end, len(a.availableProjects))))
+	sb.WriteString(a.popupBottom(popupWidth, '━'))
 	return sb.String()
 }
 
 func (a *App) renderQueryLibraryPopup() string {
 	var sb strings.Builder
 	popupWidth := minInt(maxInt(44, a.width-20), 110)
-	title := " QUERY LIBRARY "
-	sb.WriteString("┏" + title + strings.Repeat("━", maxInt(0, popupWidth-len(title)-2)) + "\n")
+	sb.WriteString(a.popupTop(popupWidth, "QUERY LIBRARY"))
 	if len(a.queryLibrary) == 0 {
-		sb.WriteString("┃ No saved queries yet\n")
-		sb.WriteString("┣" + strings.Repeat("━", popupWidth-1) + "\n")
-		sb.WriteString("┃ Ctrl+S in query editor to save | Esc close\n")
+		sb.WriteString(a.popupLine(popupWidth, "No saved queries yet"))
+		sb.WriteString(a.popupSeparator(popupWidth, '━'))
+		sb.WriteString(a.popupLine(popupWidth, "Ctrl+S in query editor to save | Esc close"))
+		sb.WriteString(a.popupBottom(popupWidth, '━'))
 		return sb.String()
 	}
 	maxVisible := maxInt(6, a.height-14)
@@ -1755,12 +2006,13 @@ func (a *App) renderQueryLibraryPopup() string {
 			line = line[:popupWidth-7] + "..."
 		}
 		if i == a.queryLibraryCursor {
-			line = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Render(line)
+			line = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorSelectionFG)).Background(lipgloss.Color(colorSelectionBG)).Render(line)
 		}
-		sb.WriteString("┃ " + line + "\n")
+		sb.WriteString(a.popupLine(popupWidth, line))
 	}
-	sb.WriteString("┣" + strings.Repeat("━", popupWidth-1) + "\n")
-	sb.WriteString(fmt.Sprintf("┃ %d-%d of %d | j/k move | Enter apply | Esc close\n", start+1, end, len(a.queryLibrary)))
+	sb.WriteString(a.popupSeparator(popupWidth, '━'))
+	sb.WriteString(a.popupLine(popupWidth, fmt.Sprintf("%d-%d of %d | j/k move | Enter apply | Esc close", start+1, end, len(a.queryLibrary))))
+	sb.WriteString(a.popupBottom(popupWidth, '━'))
 	return sb.String()
 }
 
@@ -1779,12 +2031,12 @@ func (a *App) openQueryHistoryModal(previous string) {
 func (a *App) renderQueryHistoryPopup() string {
 	var sb strings.Builder
 	popupWidth := minInt(maxInt(44, a.width-20), 120)
-	title := " QUERY HISTORY "
-	sb.WriteString("┏" + title + strings.Repeat("━", maxInt(0, popupWidth-len(title)-2)) + "\n")
+	sb.WriteString(a.popupTop(popupWidth, "QUERY HISTORY"))
 	if len(a.queryHistory) == 0 {
-		sb.WriteString("┃ No executed queries yet\n")
-		sb.WriteString("┣" + strings.Repeat("━", popupWidth-1) + "\n")
-		sb.WriteString("┃ Run a query first | Esc close\n")
+		sb.WriteString(a.popupLine(popupWidth, "No executed queries yet"))
+		sb.WriteString(a.popupSeparator(popupWidth, '━'))
+		sb.WriteString(a.popupLine(popupWidth, "Run a query first | Esc close"))
+		sb.WriteString(a.popupBottom(popupWidth, '━'))
 		return sb.String()
 	}
 	maxVisible := maxInt(6, a.height-14)
@@ -1804,12 +2056,57 @@ func (a *App) renderQueryHistoryPopup() string {
 			line = line[:popupWidth-7] + "..."
 		}
 		if i == a.queryHistoryPopupCursor {
-			line = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Render(line)
+			line = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorSelectionFG)).Background(lipgloss.Color(colorSelectionBG)).Render(line)
 		}
-		sb.WriteString("┃ " + line + "\n")
+		sb.WriteString(a.popupLine(popupWidth, line))
 	}
-	sb.WriteString("┣" + strings.Repeat("━", popupWidth-1) + "\n")
-	sb.WriteString(fmt.Sprintf("┃ %d-%d of %d | j/k or Ctrl+R/Ctrl+G | Enter apply | Esc close\n", start+1, end, len(a.queryHistory)))
+	sb.WriteString(a.popupSeparator(popupWidth, '━'))
+	sb.WriteString(a.popupLine(popupWidth, fmt.Sprintf("%d-%d of %d | j/k or Ctrl+R/Ctrl+G | Enter apply | Esc close", start+1, end, len(a.queryHistory))))
+	sb.WriteString(a.popupBottom(popupWidth, '━'))
+	return sb.String()
+}
+
+func (a *App) renderKeyModePopup() string {
+	var sb strings.Builder
+	popupWidth := minInt(maxInt(36, a.width-40), 56)
+	sb.WriteString(a.popupTop(popupWidth, "KEY MODE"))
+	options := []string{"standard", "vim"}
+	for i, opt := range options {
+		prefix := "  "
+		if i == a.keyModeCursor {
+			prefix = "▶ "
+		}
+		line := prefix + opt
+		if i == a.keyModeCursor {
+			line = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorSelectionFG)).Background(lipgloss.Color(colorSelectionBG)).Render(line)
+		}
+		sb.WriteString(a.popupLine(popupWidth, line))
+	}
+	sb.WriteString(a.popupSeparator(popupWidth, '━'))
+	sb.WriteString(a.popupLine(popupWidth, "j/k move | Enter apply | Esc close"))
+	sb.WriteString(a.popupBottom(popupWidth, '━'))
+	return sb.String()
+}
+
+func (a *App) renderTimezonePopup() string {
+	var sb strings.Builder
+	popupWidth := minInt(maxInt(36, a.width-40), 56)
+	sb.WriteString(a.popupTop(popupWidth, "TIMEZONE"))
+	options := []string{"UTC", "local"}
+	for i, opt := range options {
+		prefix := "  "
+		if i == a.timezoneCursor {
+			prefix = "▶ "
+		}
+		line := prefix + opt
+		if i == a.timezoneCursor {
+			line = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorSelectionFG)).Background(lipgloss.Color(colorSelectionBG)).Render(line)
+		}
+		sb.WriteString(a.popupLine(popupWidth, line))
+	}
+	sb.WriteString(a.popupSeparator(popupWidth, '━'))
+	sb.WriteString(a.popupLine(popupWidth, "j/k move | Enter apply | Esc close"))
+	sb.WriteString(a.popupBottom(popupWidth, '━'))
 	return sb.String()
 }
 
@@ -1904,26 +2201,52 @@ func deriveQueryLibraryName(filter string) string {
 }
 
 func (a *App) renderCenteredPopup(base, popup string) string {
-	baseLines := strings.Split(strings.TrimRight(base, "\n"), "\n")
-	if len(baseLines) < a.height {
-		for len(baseLines) < a.height {
-			baseLines = append(baseLines, "")
-		}
-	}
+	_ = base
 	popupLines := strings.Split(strings.TrimRight(popup, "\n"), "\n")
 	if len(popupLines) == 0 {
 		return base
 	}
-	startRow := maxInt(1, (a.height-len(popupLines))/2)
+
+	header := ansiEscapeRegex.ReplaceAllString(strings.TrimSuffix(a.renderTopBar(), "\n"), "")
+	headerWidth := lipgloss.Width(header)
+	if headerWidth < a.width {
+		header += strings.Repeat(" ", a.width-headerWidth)
+	}
+	if headerWidth > a.width {
+		header = header[:a.width]
+	}
+	separator := strings.Repeat("─", maxInt(1, a.width))
+
+	backdropLine := lipgloss.NewStyle().
+		Background(lipgloss.Color("235")).
+		Render(strings.Repeat(" ", maxInt(1, a.width)))
+	screenHeight := maxInt(1, a.height-1)
+	bodyHeight := maxInt(1, screenHeight-2)
+	canvas := make([]string, 0, bodyHeight)
+	for i := 0; i < bodyHeight; i++ {
+		canvas = append(canvas, backdropLine)
+	}
+
+	startRow := maxInt(0, (bodyHeight-len(popupLines))/2)
 	for i, line := range popupLines {
 		row := startRow + i
-		if row < 0 || row >= len(baseLines) {
+		if row < 0 || row >= len(canvas) {
 			continue
 		}
-		leftPad := maxInt(0, (a.width-len(line))/2)
-		baseLines[row] = strings.Repeat(" ", leftPad) + line
+		lineWidth := lipgloss.Width(line)
+		if lineWidth > a.width {
+			line = lipgloss.NewStyle().Width(a.width).MaxWidth(a.width).Render(line)
+			lineWidth = lipgloss.Width(line)
+		}
+		leftPadCount := maxInt(0, (a.width-lineWidth)/2)
+		rightPadCount := maxInt(0, a.width-leftPadCount-lineWidth)
+		padStyle := lipgloss.NewStyle().Background(lipgloss.Color("235"))
+		leftPad := padStyle.Render(strings.Repeat(" ", leftPadCount))
+		rightPad := padStyle.Render(strings.Repeat(" ", rightPadCount))
+		canvas[row] = leftPad + line + rightPad
 	}
-	return strings.Join(baseLines, "\n")
+
+	return a.fitToViewport(header + "\n" + separator + "\n" + strings.Join(canvas, "\n"))
 }
 
 func (a *App) runQueryCmd(filter, mode string) tea.Cmd {
@@ -2126,7 +2449,7 @@ func (a *App) buildOlderFilter() string {
 	if len(a.state.LogListState.Logs) == 0 {
 		return base
 	}
-	oldest := a.state.LogListState.Logs[len(a.state.LogListState.Logs)-1].Timestamp
+	oldest := a.oldestLoadedTimestamp()
 	timeClause := fmt.Sprintf("timestamp<%q", oldest.Format(time.RFC3339))
 	if base == "" {
 		return timeClause
@@ -2139,12 +2462,38 @@ func (a *App) buildNewerFilter() string {
 	if len(a.state.LogListState.Logs) == 0 {
 		return base
 	}
-	newest := a.state.LogListState.Logs[0].Timestamp
+	newest := a.newestLoadedTimestamp()
 	timeClause := fmt.Sprintf("timestamp>%q", newest.Format(time.RFC3339))
 	if base == "" {
 		return timeClause
 	}
 	return fmt.Sprintf("(%s) AND %s", base, timeClause)
+}
+
+func (a *App) oldestLoadedTimestamp() time.Time {
+	if len(a.state.LogListState.Logs) == 0 {
+		return time.Time{}
+	}
+	oldest := a.state.LogListState.Logs[0].Timestamp
+	for _, entry := range a.state.LogListState.Logs[1:] {
+		if entry.Timestamp.Before(oldest) {
+			oldest = entry.Timestamp
+		}
+	}
+	return oldest
+}
+
+func (a *App) newestLoadedTimestamp() time.Time {
+	if len(a.state.LogListState.Logs) == 0 {
+		return time.Time{}
+	}
+	newest := a.state.LogListState.Logs[0].Timestamp
+	for _, entry := range a.state.LogListState.Logs[1:] {
+		if entry.Timestamp.After(newest) {
+			newest = entry.Timestamp
+		}
+	}
+	return newest
 }
 
 func (a *App) getTimeRangeLabel() string {
@@ -2177,38 +2526,38 @@ func (a *App) getSeveritySummary() string {
 func (a *App) styleSeverityRow(severity, line string) string {
 	switch severity {
 	case models.SeverityError, models.SeverityCritical, models.SeverityAlert, models.SeverityEmergency:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render(line)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(colorGCPError)).Render(line)
 	case models.SeverityWarning:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render(line)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(colorGCPWarn)).Render(line)
 	case models.SeverityInfo, models.SeverityNotice:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Render(line)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(colorGCPBlueLight)).Render(line)
 	case models.SeverityDebug, models.SeverityDefault:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(line)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(colorNeutralSubtle)).Render(line)
 	default:
-		return line
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(colorNeutralText)).Render(line)
 	}
 }
 
 func (a *App) styleSeverityBadge(severity string) string {
 	switch severity {
 	case models.SeverityError, models.SeverityCritical, models.SeverityAlert, models.SeverityEmergency:
-		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("160")).Padding(0, 1).Render("ERR")
+		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorBadgeTextLite)).Background(lipgloss.Color(colorGCPError)).Padding(0, 1).Render("ERR")
 	case models.SeverityWarning:
-		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("16")).Background(lipgloss.Color("214")).Padding(0, 1).Render("WRN")
+		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorBadgeTextDark)).Background(lipgloss.Color(colorGCPWarn)).Padding(0, 1).Render("WRN")
 	case models.SeverityInfo, models.SeverityNotice:
-		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("16")).Background(lipgloss.Color("81")).Padding(0, 1).Render("INF")
+		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorBadgeTextLite)).Background(lipgloss.Color(colorGCPBlue)).Padding(0, 1).Render("INF")
 	case models.SeverityDebug, models.SeverityDefault:
-		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("16")).Background(lipgloss.Color("245")).Padding(0, 1).Render("DBG")
+		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorBadgeTextDark)).Background(lipgloss.Color("248")).Padding(0, 1).Render("DBG")
 	default:
-		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("16")).Background(lipgloss.Color("250")).Padding(0, 1).Render("LOG")
+		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorBadgeTextDark)).Background(lipgloss.Color("250")).Padding(0, 1).Render("LOG")
 	}
 }
 
 func (a *App) styleSelectedRow(line string) string {
 	return lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("230")).
-		Background(lipgloss.Color("25")).
+		Foreground(lipgloss.Color(colorSelectionFG)).
+		Background(lipgloss.Color(colorSelectionBG)).
 		Render(line)
 }
 
@@ -2256,12 +2605,13 @@ func (a *App) logViewportRows() int {
 	if a.activeModalName == "details" {
 		detailsLines = strings.Count(a.renderDetailsPanel(), "\n")
 	}
-	footerLines := 2
+	footerLines := 3
 	if a.lastErr != "" {
-		footerLines = 3
+		footerLines = 4
 	}
 	overhead := strings.Count(topBar, "\n") + strings.Count(header, "\n") + strings.Count(timeline, "\n") + detailsLines + footerLines
-	logsHeight := a.height - overhead - 2
+	screenHeight := maxInt(1, a.height-1)
+	logsHeight := screenHeight - overhead - 2
 	if logsHeight < 6 {
 		logsHeight = 6
 	}
@@ -2362,7 +2712,8 @@ func (a *App) availableDetailModes(entry models.LogEntry) []string {
 	return modes
 }
 
-func (a *App) detailPopupLines(entry models.LogEntry) ([]string, int) {
+func (a *App) detailPopupLines(entry models.LogEntry, popupWidth int) ([]string, int) {
+	contentWidth := maxInt(30, popupWidth-8)
 	switch a.detailViewMode {
 	case "json-tree":
 		treeLines := a.currentJSONTreeLines()
@@ -2386,10 +2737,10 @@ func (a *App) detailPopupLines(entry models.LogEntry) ([]string, int) {
 		if !ok {
 			return []string{"No payload available"}, -1
 		}
-		return wrapTextByWidth(strings.Split(payloadText, "\n"), maxInt(30, a.width-8)), -1
+		return wrapTextByWidth(strings.Split(payloadText, "\n"), contentWidth), -1
 	default:
 		raw := a.formatter.FormatLogDetails(entry)
-		return wrapTextByWidth(strings.Split(raw, "\n"), maxInt(30, a.width-8)), -1
+		return wrapTextByWidth(strings.Split(raw, "\n"), contentWidth), -1
 	}
 }
 
@@ -2883,21 +3234,17 @@ func mergeUniqueLogs(existing []models.LogEntry, incoming []models.LogEntry, pre
 	}
 
 	seen := make(map[string]bool, len(existing)+len(incoming))
-	keyFor := func(e models.LogEntry) string {
-		return e.Timestamp.Format(time.RFC3339Nano) + "|" + e.Severity + "|" + e.Message
-	}
-
 	out := make([]models.LogEntry, 0, len(existing)+len(incoming))
 	if prepend {
 		for _, e := range incoming {
-			k := keyFor(e)
+			k := logEntryKey(e)
 			if !seen[k] {
 				seen[k] = true
 				out = append(out, e)
 			}
 		}
 		for _, e := range existing {
-			k := keyFor(e)
+			k := logEntryKey(e)
 			if !seen[k] {
 				seen[k] = true
 				out = append(out, e)
@@ -2907,20 +3254,24 @@ func mergeUniqueLogs(existing []models.LogEntry, incoming []models.LogEntry, pre
 	}
 
 	for _, e := range existing {
-		k := keyFor(e)
+		k := logEntryKey(e)
 		if !seen[k] {
 			seen[k] = true
 			out = append(out, e)
 		}
 	}
 	for _, e := range incoming {
-		k := keyFor(e)
+		k := logEntryKey(e)
 		if !seen[k] {
 			seen[k] = true
 			out = append(out, e)
 		}
 	}
 	return out
+}
+
+func logEntryKey(e models.LogEntry) string {
+	return e.Timestamp.Format(time.RFC3339Nano) + "|" + e.Severity + "|" + e.Message
 }
 
 func mergeUniqueStrings(existing, incoming []string) []string {
@@ -3008,4 +3359,16 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func (a *App) fitToViewport(output string) string {
+	if a.height <= 0 {
+		return output
+	}
+	viewHeight := maxInt(1, a.height-1)
+	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
+	if len(lines) <= viewHeight {
+		return output
+	}
+	return strings.Join(lines[:viewHeight], "\n")
 }

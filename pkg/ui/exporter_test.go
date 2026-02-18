@@ -150,8 +150,8 @@ func TestExportToText(t *testing.T) {
 	}
 
 	contentStr := string(content)
-	if !strings.Contains(contentStr, "LOG ENTRY DETAILS") {
-		t.Error("Text export should contain header")
+	if !strings.Contains(contentStr, "Timestamp:") {
+		t.Error("Text export should contain timestamp label")
 	}
 }
 

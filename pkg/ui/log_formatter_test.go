@@ -52,7 +52,7 @@ func TestFormatLogLineMessageTruncation(t *testing.T) {
 	}
 
 	line := lf.FormatLogLine(entry, 50)
-	
+
 	if len(line) > 50 {
 		t.Errorf("Line should be truncated to ~50 chars, got %d", len(line))
 	}
@@ -82,8 +82,8 @@ func TestFormatLogDetails(t *testing.T) {
 	lf := NewLogFormatter(120, false)
 	details := lf.FormatLogDetails(entry)
 
-	if !strings.Contains(details, "LOG ENTRY DETAILS") {
-		t.Error("Details should contain header")
+	if !strings.Contains(details, "Timestamp:") {
+		t.Error("Details should contain timestamp label")
 	}
 
 	if !strings.Contains(details, entry.Message) {
@@ -155,9 +155,9 @@ func TestTruncate(t *testing.T) {
 
 func TestPadRight(t *testing.T) {
 	tests := []struct {
-		input    string
-		width    int
-		minLen   int
+		input  string
+		width  int
+		minLen int
 	}{
 		{"hello", 10, 10},
 		{"test", 4, 4},

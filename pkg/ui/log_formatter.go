@@ -40,11 +40,6 @@ func (lf *LogFormatter) FormatLogLine(entry models.LogEntry, maxLen int) string 
 func (lf *LogFormatter) FormatLogDetails(entry models.LogEntry) string {
 	var sb strings.Builder
 
-	// Header
-	sb.WriteString("═══════════════════════════════════════════════════════\n")
-	sb.WriteString("LOG ENTRY DETAILS\n")
-	sb.WriteString("═══════════════════════════════════════════════════════\n\n")
-
 	// Timestamp
 	sb.WriteString(fmt.Sprintf("Timestamp:  %s\n", lf.displayTime(entry.Timestamp).Format(time.RFC3339)))
 
@@ -104,8 +99,6 @@ func (lf *LogFormatter) FormatLogDetails(entry models.LogEntry) string {
 	if entry.TextPayload != "" {
 		sb.WriteString(fmt.Sprintf("\nText Payload:\n%s\n", entry.TextPayload))
 	}
-
-	sb.WriteString("\n═══════════════════════════════════════════════════════\n")
 
 	return sb.String()
 }

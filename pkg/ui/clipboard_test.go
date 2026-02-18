@@ -62,8 +62,8 @@ func TestCopyEntryFull(t *testing.T) {
 		t.Errorf("CopyEntry failed: %v", err)
 	}
 
-	if !strings.Contains(content, "LOG ENTRY DETAILS") {
-		t.Error("Full format should contain header")
+	if !strings.Contains(content, "Timestamp:") {
+		t.Error("Full format should contain timestamp label")
 	}
 
 	if !strings.Contains(content, "prod") {

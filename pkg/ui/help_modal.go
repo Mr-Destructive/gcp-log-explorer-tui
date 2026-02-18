@@ -9,17 +9,19 @@ import (
 
 // HelpModal provides an interactive help interface
 type HelpModal struct {
-	visible bool
-	width   int
-	height  int
+	visible        bool
+	width          int
+	height         int
+	currentSection int
 }
 
 // NewHelpModal creates a new help modal
 func NewHelpModal() *HelpModal {
 	return &HelpModal{
-		visible: false,
-		width:   80,
-		height:  24,
+		visible:        false,
+		width:          80,
+		height:         24,
+		currentSection: 0,
 	}
 }
 
@@ -42,7 +44,6 @@ func (hm *HelpModal) Render(width, height int) string {
 	hm.width = width
 	hm.height = height
 
-	// Create content
 	content := hm.getHelpContent()
 
 	// Style the modal
@@ -60,58 +61,118 @@ func (hm *HelpModal) Render(width, height int) string {
 func (hm *HelpModal) getHelpContent() string {
 	var sb strings.Builder
 
-	sb.WriteString(lipgloss.NewStyle().Bold(true).Render("LOG EXPLORER TUI HELP"))
-	sb.WriteString("\n")
-	sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("Efficient shortcuts reference"))
-	sb.WriteString("\n\n")
-
-	rows := [][3]string{
-		{"Query", "q", "Open query editor"},
-		{"Query", "enter", "Run query in editor"},
-		{"Query", "ctrl+n", "Insert newline in query"},
-		{"Query", "ctrl+a", "Select all query text"},
-		{"Query", "ctrl+/", "Toggle comment on current line"},
-		{"Query", "ctrl+left/right", "Move by word"},
-		{"Query", "ctrl+w / ctrl+delete", "Delete previous / next word"},
-		{"Query", "ctrl+r / ctrl+g", "Open query history popup (prev/next)"},
-		{"Query", "ctrl+s", "Save current query to query library"},
-		{"Query", "ctrl+y", "Open query library picker"},
-		{"Query", "-- or #", "Comment line in query editor"},
-		{"Filter", "t", "Time range filter"},
-		{"Filter", "f", "Severity filter"},
-		{"Filter", "m", "Toggle stream mode"},
-		{"Filter", "ctrl+a", "Toggle auto-load all pages"},
-		{"Nav", "j / k", "Scroll logs (edge triggers paging)"},
-		{"Nav", "g / G", "Top / bottom"},
-		{"Nav", "ctrl+f / ctrl+b", "Page down / up"},
-		{"Log", "enter / ctrl+d", "Toggle details panel"},
-		{"Log", "ctrl+p", "Full log popup"},
-		{"Log", "v / tab", "Cycle popup view (full, payload tree, raw)"},
-		{"Log", "h / l", "Collapse / expand payload JSON node"},
-		{"Log", "z / Z", "Collapse all / expand all payload JSON nodes"},
-		{"Log", "y / Y", "Copy selected JSON node / full payload"},
-		{"Log", "ctrl+e", "Open payload only in $EDITOR (select/copy)"},
-		{"Log", "ctrl+o", "Open selected log in $EDITOR"},
-		{"Log", "ctrl+l", "Open loaded logs (JSON) in $EDITOR"},
-		{"Log", "ctrl+shift+l / alt+l", "Open loaded logs (CSV) in $EDITOR"},
-		{"Other", "e", "Export logs"},
-		{"Other", "s", "Generate share link"},
-		{"Other", "P", "Project selector"},
-		{"Other", "L", "Open query library"},
-		{"Other", "r", "Rerun query (bypass cache)"},
-		{"Other", "f6", "Toggle key mode (vim/standard)"},
-		{"Other", "f7", "Toggle timezone (UTC/local)"},
-		{"Other", "esc", "Close active modal"},
-		{"Other", "?", "Toggle help"},
-		{"Other", "ctrl+c", "Quit"},
+	sections := hm.getSections()
+	if len(sections) == 0 {
+		return "No help sections available"
 	}
+	if hm.currentSection < 0 {
+		hm.currentSection = 0
+	}
+	if hm.currentSection >= len(sections) {
+		hm.currentSection = len(sections) - 1
+	}
+	section := sections[hm.currentSection]
 
-	sb.WriteString(hm.renderResponsiveTable(rows))
+	sb.WriteString(lipgloss.NewStyle().Bold(true).Render("LOG EXPLORER HELP"))
+	sb.WriteString("\n")
+	sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("Compact, sectioned shortcuts"))
+	sb.WriteString("\n\n")
+	sb.WriteString(hm.renderTabs(sections))
+	sb.WriteString("\n")
+	sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Render(section.summary))
+	sb.WriteString("\n\n")
+	sb.WriteString(hm.renderResponsiveTable(section.rows))
+	sb.WriteString("\n")
+	sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("Tab/←/→/h/l/j/k switch section | Esc/? close"))
 
 	return sb.String()
 }
 
-func (hm *HelpModal) renderResponsiveTable(rows [][3]string) string {
+type helpSection struct {
+	title   string
+	summary string
+	rows    [][2]string
+}
+
+func (hm *HelpModal) getSections() []helpSection {
+	return []helpSection{
+		{
+			title:   "Core",
+			summary: "Everyday navigation and open/close actions",
+			rows: [][2]string{
+				{"q", "Open query editor"},
+				{"j/k or ↑/↓", "Move through log list"},
+				{"g / G", "Jump to first / last visible log"},
+				{"Enter / Ctrl+D", "Toggle details panel"},
+				{"Ctrl+P", "Open full log popup"},
+				{"Esc / ?", "Close modal / help"},
+			},
+		},
+		{
+			title:   "Query",
+			summary: "Browser-like query editing and saved queries",
+			rows: [][2]string{
+				{"Enter", "Run query in editor"},
+				{"Ctrl+A", "Select all query text"},
+				{"Ctrl+/", "Toggle comment line"},
+				{"Ctrl+Left/Right", "Move by word"},
+				{"Ctrl+W / Ctrl+Delete", "Delete previous / next word"},
+				{"Ctrl+R/Ctrl+G", "Open query history popup"},
+				{"Ctrl+S / Ctrl+Y", "Save query / open library"},
+			},
+		},
+		{
+			title:   "Logs",
+			summary: "Inspect payloads and export selected/all logs",
+			rows: [][2]string{
+				{"v / Tab", "Cycle popup view modes"},
+				{"h/l", "Collapse / expand JSON node"},
+				{"z / Z", "Collapse all / expand all nodes"},
+				{"y / Y", "Copy selected node / full payload"},
+				{"Ctrl+E", "Open payload in $EDITOR"},
+				{"Ctrl+O", "Open selected log in $EDITOR"},
+				{"Ctrl+L / Alt+L", "Open loaded logs as JSON / CSV"},
+			},
+		},
+		{
+			title:   "Filters",
+			summary: "Filtering, paging strategy, and stream controls",
+			rows: [][2]string{
+				{"t", "Time range filter"},
+				{"f", "Severity filter"},
+				{"m", "Toggle stream mode"},
+				{"Ctrl+A", "Toggle auto-load all pages"},
+				{"r", "Rerun query (bypass cache)"},
+				{"F8", "Toggle log order bottom/top"},
+			},
+		},
+		{
+			title:   "System",
+			summary: "Session and environment controls",
+			rows: [][2]string{
+				{"P", "Project selector popup"},
+				{"L", "Open query library popup"},
+				{"F6", "Open key mode dropdown"},
+				{"F7", "Open timezone dropdown"},
+				{"Ctrl+C", "Quit app"},
+			},
+		},
+	}
+}
+
+func (hm *HelpModal) renderTabs(sections []helpSection) string {
+	items := make([]string, 0, len(sections))
+	for i, sec := range sections {
+		if i == hm.currentSection {
+			items = append(items, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("24")).Padding(0, 1).Render(sec.title))
+		} else {
+			items = append(items, lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Padding(0, 1).Render(sec.title))
+		}
+	}
+	return strings.Join(items, " ")
+}
+
+func (hm *HelpModal) renderResponsiveTable(rows [][2]string) string {
 	var sb strings.Builder
 	contentWidth := hm.width - 10
 	if contentWidth < 56 {
@@ -120,37 +181,14 @@ func (hm *HelpModal) renderResponsiveTable(rows [][3]string) string {
 
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("14"))
 	separatorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-
-	if contentWidth >= 90 {
-		groupWidth := 8
-		keyWidth := 24
-		actionWidth := contentWidth - groupWidth - keyWidth - 6
-		sb.WriteString(headerStyle.Render(fmt.Sprintf("%-*s %-*s %-*s\n", groupWidth, "GROUP", keyWidth, "KEY", actionWidth, "ACTION")))
-		sb.WriteString(separatorStyle.Render(strings.Repeat("─", groupWidth+keyWidth+actionWidth+2)))
-		sb.WriteString("\n")
-		for _, row := range rows {
-			actionLines := wrapWords(row[2], actionWidth)
-			for i, line := range actionLines {
-				groupCell := ""
-				keyCell := ""
-				if i == 0 {
-					groupCell = row[0]
-					keyCell = row[1]
-				}
-				sb.WriteString(fmt.Sprintf("%-*s %-*s %-*s\n", groupWidth, groupCell, keyWidth, keyCell, actionWidth, line))
-			}
-		}
-		return sb.String()
-	}
-
-	keyWidth := 22
+	keyWidth := 24
 	actionWidth := contentWidth - keyWidth - 4
 	sb.WriteString(headerStyle.Render(fmt.Sprintf("%-*s %-*s\n", keyWidth, "KEY", actionWidth, "ACTION")))
 	sb.WriteString(separatorStyle.Render(strings.Repeat("─", keyWidth+actionWidth+1)))
 	sb.WriteString("\n")
 	for _, row := range rows {
-		label := row[1]
-		actionLines := wrapWords(row[2], actionWidth)
+		label := row[0]
+		actionLines := wrapWords(row[1], actionWidth)
 		for i, line := range actionLines {
 			keyCell := ""
 			if i == 0 {
@@ -186,5 +224,26 @@ func wrapWords(input string, width int) []string {
 
 // GetShortHelp returns a quick reference string
 func (hm *HelpModal) GetShortHelp() string {
-	return "? help | arrows nav | q query | enter details | ctrl+p popup | f6 key mode | ctrl+c quit"
+	return "? help | arrows nav | q query | enter details | ctrl+p popup | f6/f7/f8 modes | ctrl+c quit"
+}
+
+func (hm *HelpModal) NextSection() {
+	sections := hm.getSections()
+	if len(sections) == 0 {
+		hm.currentSection = 0
+		return
+	}
+	hm.currentSection = (hm.currentSection + 1) % len(sections)
+}
+
+func (hm *HelpModal) PrevSection() {
+	sections := hm.getSections()
+	if len(sections) == 0 {
+		hm.currentSection = 0
+		return
+	}
+	hm.currentSection--
+	if hm.currentSection < 0 {
+		hm.currentSection = len(sections) - 1
+	}
 }

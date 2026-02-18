@@ -17,6 +17,7 @@ func TestQueryModalToggleCommentAndWordEditing(t *testing.T) {
 		t.Fatalf("expected uncommented line, got %q", got)
 	}
 
+	qm.HandleKey("line-end")
 	qm.HandleKey("word-left")
 	qm.HandleKey("delete-word-left")
 	if got := qm.GetInput(); got != "ERROR" {

@@ -53,7 +53,7 @@ func TestRenderVisible(t *testing.T) {
 	}
 
 	// Check for key content
-	if !strings.Contains(output, "LOG EXPLORER TUI HELP") {
+	if !strings.Contains(output, "LOG EXPLORER HELP") {
 		t.Error("Help should contain title")
 	}
 	if !strings.Contains(output, "KEY") || !strings.Contains(output, "ACTION") {
@@ -114,21 +114,42 @@ func TestHelpContentStructure(t *testing.T) {
 
 	output := hm.Render(100, 40)
 
-	// Check for key commands - looking for partial matches since styling may interfere
+	// Check for sectioned help content
 	commands := []string{
+		"Core",
+		"Compact, sectioned shortcuts",
 		"Open query editor",
-		"query history popup",
-		"Time range filter",
-		"Severity filter",
-		"selected log",
-		"loaded logs (CSV)",
-		"Project",
-		"Quit",
+		"Tab/←/→/h/l/j/k switch section",
 	}
 
 	for _, cmd := range commands {
 		if !strings.Contains(output, cmd) {
 			t.Errorf("Help should mention: %s", cmd)
 		}
+	}
+}
+
+func TestHelpSectionNavigation(t *testing.T) {
+	hm := NewHelpModal()
+	hm.SetVisible(true)
+
+	first := hm.Render(100, 30)
+	if !strings.Contains(first, "Core") {
+		t.Fatalf("expected Core tab in first render")
+	}
+	if !strings.Contains(first, "Open query editor") {
+		t.Fatalf("expected Core section content in first render")
+	}
+
+	hm.NextSection()
+	second := hm.Render(100, 30)
+	if !strings.Contains(second, "Browser-like query editing and saved queries") {
+		t.Fatalf("expected Query section summary after NextSection")
+	}
+
+	hm.PrevSection()
+	third := hm.Render(100, 30)
+	if !strings.Contains(third, "Everyday navigation and open/close actions") {
+		t.Fatalf("expected Core section summary after PrevSection")
 	}
 }

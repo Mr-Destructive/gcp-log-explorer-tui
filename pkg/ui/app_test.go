@@ -650,8 +650,15 @@ func TestArrowNavigationAndKeyModeToggle(t *testing.T) {
 
 	newModel, _ = app.Update(tea.KeyMsg{Type: tea.KeyF6})
 	app = newModel.(*App)
+	if app.activeModalName != "keyModePopup" {
+		t.Fatalf("expected keyModePopup after f6")
+	}
+	newModel, _ = app.Update(tea.KeyMsg{Type: tea.KeyUp})
+	app = newModel.(*App)
+	newModel, _ = app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	app = newModel.(*App)
 	if app.vimMode {
-		t.Fatalf("expected vim mode off after f6 toggle")
+		t.Fatalf("expected vim mode off after selecting standard mode")
 	}
 
 	prev := app.panes.GetFocusedPane()
@@ -761,6 +768,25 @@ func TestQueryEditorCtrlASelectAll(t *testing.T) {
 	}
 }
 
+func TestQueryEditorSpaceInput(t *testing.T) {
+	state := &models.AppState{IsReady: true}
+	app := NewApp(state)
+	newModel, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	app = newModel.(*App)
+
+	newModel, _ = app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("severity=ERROR")})
+	app = newModel.(*App)
+	newModel, _ = app.Update(tea.KeyMsg{Type: tea.KeySpace})
+	app = newModel.(*App)
+	newModel, _ = app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("resource.type=cloud_run_revision")})
+	app = newModel.(*App)
+
+	want := "severity=ERROR resource.type=cloud_run_revision"
+	if got := app.queryModal.GetInput(); got != want {
+		t.Fatalf("expected space insertion in query editor, got %q", got)
+	}
+}
+
 func TestQueryHistoryUsesPopupFromQueryEditor(t *testing.T) {
 	state := &models.AppState{IsReady: true}
 	app := NewApp(state)
@@ -784,6 +810,40 @@ func TestQueryHistoryUsesPopupFromQueryEditor(t *testing.T) {
 	}
 }
 
+func TestOverlayPreservesTopBar(t *testing.T) {
+	state := &models.AppState{
+		IsReady:        true,
+		CurrentProject: "demo-project",
+		LogListState: models.LogListState{
+			Logs: []models.LogEntry{{ID: "1", Message: "m", Timestamp: time.Now()}},
+		},
+	}
+	app := NewApp(state)
+	app.width = 120
+	app.height = 30
+
+	newModel, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	app = newModel.(*App)
+	helpView := app.View()
+	if !contains(helpView, "GCP Log Explorer") {
+		t.Fatalf("expected top bar title visible in help overlay")
+	}
+	if !contains(helpView, "project:demo-project") {
+		t.Fatalf("expected top bar project visible in help overlay")
+	}
+
+	app.activeModalName = "queryHistory"
+	app.previousModalName = "none"
+	app.queryHistory = []string{"severity=ERROR"}
+	historyView := app.View()
+	if !contains(historyView, "GCP Log Explorer") {
+		t.Fatalf("expected top bar title visible in popup overlay")
+	}
+	if !contains(historyView, "project:demo-project") {
+		t.Fatalf("expected top bar project visible in popup overlay")
+	}
+}
+
 func TestQueryPanelDoesNotRenderInlineHistory(t *testing.T) {
 	state := &models.AppState{IsReady: true}
 	app := NewApp(state)
@@ -802,13 +862,42 @@ func TestTimezoneToggle(t *testing.T) {
 	}
 	newModel, _ := app.Update(tea.KeyMsg{Type: tea.KeyF7})
 	app = newModel.(*App)
+	if app.activeModalName != "timezonePopup" {
+		t.Fatalf("expected timezonePopup after f7")
+	}
+	newModel, _ = app.Update(tea.KeyMsg{Type: tea.KeyDown})
+	app = newModel.(*App)
+	newModel, _ = app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	app = newModel.(*App)
 	if app.timezoneMode != "local" {
-		t.Fatalf("expected timezone local after f7, got %s", app.timezoneMode)
+		t.Fatalf("expected timezone local after selecting local, got %s", app.timezoneMode)
 	}
 	newModel, _ = app.Update(tea.KeyMsg{Type: tea.KeyF7})
 	app = newModel.(*App)
+	newModel, _ = app.Update(tea.KeyMsg{Type: tea.KeyUp})
+	app = newModel.(*App)
+	newModel, _ = app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	app = newModel.(*App)
 	if app.timezoneMode != "utc" {
-		t.Fatalf("expected timezone utc after second f7, got %s", app.timezoneMode)
+		t.Fatalf("expected timezone utc after selecting utc, got %s", app.timezoneMode)
+	}
+}
+
+func TestLogOrderToggle(t *testing.T) {
+	state := &models.AppState{IsReady: true}
+	app := NewApp(state)
+	if app.logOrder != "latest_bottom" {
+		t.Fatalf("expected default log order latest_bottom, got %s", app.logOrder)
+	}
+	newModel, _ := app.Update(tea.KeyMsg{Type: tea.KeyF8})
+	app = newModel.(*App)
+	if app.logOrder != "latest_top" {
+		t.Fatalf("expected log order latest_top after f8, got %s", app.logOrder)
+	}
+	newModel, _ = app.Update(tea.KeyMsg{Type: tea.KeyF8})
+	app = newModel.(*App)
+	if app.logOrder != "latest_bottom" {
+		t.Fatalf("expected log order latest_bottom after second f8, got %s", app.logOrder)
 	}
 }
 

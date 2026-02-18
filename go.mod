@@ -2,10 +2,7 @@ module github.com/user/log-explorer-tui
 
 go 1.24.2
 
-replace github.com/atotto/clipboard => ./third_party/clipboardstub
-
 require (
-	github.com/atotto/clipboard v0.1.4 // indirect
 	cloud.google.com/go v0.123.0 // indirect
 	cloud.google.com/go/auth v0.18.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect

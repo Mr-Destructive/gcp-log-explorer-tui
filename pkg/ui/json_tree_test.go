@@ -53,3 +53,27 @@ func TestFormatJSONValueForCopy(t *testing.T) {
 		t.Fatalf("expected marshaled object, got %q", got)
 	}
 }
+
+func TestBuildJSONTreeLinesTypedMapExpands(t *testing.T) {
+	root := map[string]interface{}{
+		"labels": map[string]string{
+			"service": "api",
+			"env":     "prod",
+		},
+	}
+	expanded := map[string]bool{
+		"$":        true,
+		"$.labels": true,
+	}
+	lines := buildJSONTreeLines(root, expanded)
+	found := false
+	for _, line := range lines {
+		if strings.Contains(line.path, "$.labels.service") || strings.Contains(line.text, "service:") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected typed map children to be expanded")
+	}
+}

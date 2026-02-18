@@ -13,21 +13,23 @@ type LogFormatter struct {
 	maxWidth     int
 	timeFormat   string
 	useColor     bool
+	useLocalTime bool
 }
 
 // NewLogFormatter creates a new log formatter
 func NewLogFormatter(maxWidth int, useColor bool) *LogFormatter {
 	return &LogFormatter{
-		maxWidth:   maxWidth,
-		timeFormat: "15:04:05",
-		useColor:   useColor,
+		maxWidth:     maxWidth,
+		timeFormat:   "15:04:05",
+		useColor:     useColor,
+		useLocalTime: false,
 	}
 }
 
 // FormatLogLine formats a log entry as a single line for list display
 func (lf *LogFormatter) FormatLogLine(entry models.LogEntry, maxLen int) string {
 	// Format: [TIME] [SEVERITY] MESSAGE
-	timestamp := entry.Timestamp.Format(lf.timeFormat)
+	timestamp := lf.displayTime(entry.Timestamp).Format(lf.timeFormat)
 	severity := padRight(entry.Severity, 8)
 	message := truncate(entry.Message, maxLen-30)
 
@@ -44,7 +46,7 @@ func (lf *LogFormatter) FormatLogDetails(entry models.LogEntry) string {
 	sb.WriteString("═══════════════════════════════════════════════════════\n\n")
 
 	// Timestamp
-	sb.WriteString(fmt.Sprintf("Timestamp:  %s\n", entry.Timestamp.Format(time.RFC3339)))
+	sb.WriteString(fmt.Sprintf("Timestamp:  %s\n", lf.displayTime(entry.Timestamp).Format(time.RFC3339)))
 
 	// Severity
 	sb.WriteString(fmt.Sprintf("Severity:   %s\n", entry.Severity))
@@ -112,7 +114,7 @@ func (lf *LogFormatter) FormatLogDetails(entry models.LogEntry) string {
 func (lf *LogFormatter) FormatCompact(entry models.LogEntry) string {
 	var sb strings.Builder
 
-	sb.WriteString(fmt.Sprintf("Time: %s\n", entry.Timestamp.Format(time.RFC3339)))
+	sb.WriteString(fmt.Sprintf("Time: %s\n", lf.displayTime(entry.Timestamp).Format(time.RFC3339)))
 	sb.WriteString(fmt.Sprintf("Severity: %s\n", entry.Severity))
 	sb.WriteString(fmt.Sprintf("Message: %s\n", entry.Message))
 
@@ -156,6 +158,18 @@ func (lf *LogFormatter) SetTimeFormat(format string) {
 // SetMaxWidth sets the maximum line width
 func (lf *LogFormatter) SetMaxWidth(width int) {
 	lf.maxWidth = width
+}
+
+// SetUseLocalTime toggles local timezone rendering.
+func (lf *LogFormatter) SetUseLocalTime(useLocal bool) {
+	lf.useLocalTime = useLocal
+}
+
+func (lf *LogFormatter) displayTime(t time.Time) time.Time {
+	if lf.useLocalTime {
+		return t.Local()
+	}
+	return t.UTC()
 }
 
 // HighlightMessage highlights a keyword in a message

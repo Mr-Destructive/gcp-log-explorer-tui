@@ -3,6 +3,7 @@ package ui
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -61,8 +62,7 @@ func appendJSONTreeNode(lines *[]jsonTreeLine, value interface{}, path, label st
 	nextAncestors := append([]bool{}, ancestorsHasNext...)
 	nextAncestors = append(nextAncestors, !isLast)
 
-	switch typed := value.(type) {
-	case map[string]interface{}:
+	if typed, ok := toMap(value); ok {
 		keys := make([]string, 0, len(typed))
 		for key := range typed {
 			keys = append(keys, key)
@@ -72,7 +72,9 @@ func appendJSONTreeNode(lines *[]jsonTreeLine, value interface{}, path, label st
 			childPath := path + "." + key
 			appendJSONTreeNode(lines, typed[key], childPath, key+":", nextAncestors, i == len(keys)-1, expanded)
 		}
-	case []interface{}:
+		return
+	}
+	if typed, ok := toSlice(value); ok {
 		for i, child := range typed {
 			childPath := fmt.Sprintf("%s[%d]", path, i)
 			appendJSONTreeNode(lines, child, childPath, "["+strconv.Itoa(i)+"]:", nextAncestors, i == len(typed)-1, expanded)
@@ -101,22 +103,23 @@ func buildTreePrefix(ancestorsHasNext []bool, isLast bool) string {
 }
 
 func isExpandableJSONValue(value interface{}) bool {
-	switch typed := value.(type) {
-	case map[string]interface{}:
-		return len(typed) > 0
-	case []interface{}:
-		return len(typed) > 0
-	default:
-		return false
+	if m, ok := toMap(value); ok {
+		return len(m) > 0
 	}
+	if s, ok := toSlice(value); ok {
+		return len(s) > 0
+	}
+	return false
 }
 
 func jsonTypeLabel(value interface{}) string {
-	switch value.(type) {
-	case map[string]interface{}:
+	if _, ok := toMap(value); ok {
 		return "object"
-	case []interface{}:
+	}
+	if _, ok := toSlice(value); ok {
 		return "array"
+	}
+	switch value.(type) {
 	case string:
 		return "string"
 	case bool:
@@ -131,11 +134,13 @@ func jsonTypeLabel(value interface{}) string {
 }
 
 func summarizeJSONValue(value interface{}) string {
-	switch typed := value.(type) {
-	case map[string]interface{}:
+	if typed, ok := toMap(value); ok {
 		return fmt.Sprintf("{...} (%d keys)", len(typed))
-	case []interface{}:
+	}
+	if typed, ok := toSlice(value); ok {
 		return fmt.Sprintf("[...] (%d items)", len(typed))
+	}
+	switch typed := value.(type) {
 	case string:
 		if len(typed) > 72 {
 			return strconv.Quote(typed[:69] + "...")
@@ -146,6 +151,36 @@ func summarizeJSONValue(value interface{}) string {
 	default:
 		return fmt.Sprintf("= %v", typed)
 	}
+}
+
+func toMap(value interface{}) (map[string]interface{}, bool) {
+	if value == nil {
+		return nil, false
+	}
+	v := reflect.ValueOf(value)
+	if v.Kind() != reflect.Map {
+		return nil, false
+	}
+	out := make(map[string]interface{}, v.Len())
+	for _, key := range v.MapKeys() {
+		out[fmt.Sprint(key.Interface())] = v.MapIndex(key).Interface()
+	}
+	return out, true
+}
+
+func toSlice(value interface{}) ([]interface{}, bool) {
+	if value == nil {
+		return nil, false
+	}
+	v := reflect.ValueOf(value)
+	if v.Kind() != reflect.Slice && v.Kind() != reflect.Array {
+		return nil, false
+	}
+	out := make([]interface{}, v.Len())
+	for i := 0; i < v.Len(); i++ {
+		out[i] = v.Index(i).Interface()
+	}
+	return out, true
 }
 
 func formatJSONValueForCopy(value interface{}) string {

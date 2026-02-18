@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -757,6 +758,117 @@ func TestQueryEditorCtrlASelectAll(t *testing.T) {
 	app = newModel.(*App)
 	if got := app.queryModal.GetInput(); got != "x" {
 		t.Fatalf("expected ctrl+a select-all replace behavior, got %q", got)
+	}
+}
+
+func TestQueryHistoryUsesPopupFromQueryEditor(t *testing.T) {
+	state := &models.AppState{IsReady: true}
+	app := NewApp(state)
+	app.SetQueryHistory([]string{"severity=ERROR", "severity=INFO"})
+
+	newModel, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	app = newModel.(*App)
+	newModel, _ = app.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	app = newModel.(*App)
+	if app.activeModalName != "queryHistory" {
+		t.Fatalf("expected queryHistory modal, got %s", app.activeModalName)
+	}
+
+	newModel, _ = app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	app = newModel.(*App)
+	if app.activeModalName != "query" {
+		t.Fatalf("expected return to query editor after applying history item, got %s", app.activeModalName)
+	}
+	if got := app.queryModal.GetInput(); got != "severity=ERROR" {
+		t.Fatalf("expected selected history query in editor, got %q", got)
+	}
+}
+
+func TestQueryPanelDoesNotRenderInlineHistory(t *testing.T) {
+	state := &models.AppState{IsReady: true}
+	app := NewApp(state)
+	app.SetQueryHistory([]string{"severity=ERROR"})
+	view := app.View()
+	if contains(view, "Recent queries:") {
+		t.Fatalf("inline query history should not render in main screen")
+	}
+}
+
+func TestTimezoneToggle(t *testing.T) {
+	state := &models.AppState{IsReady: true}
+	app := NewApp(state)
+	if app.timezoneMode != "utc" {
+		t.Fatalf("expected default timezone utc, got %s", app.timezoneMode)
+	}
+	newModel, _ := app.Update(tea.KeyMsg{Type: tea.KeyF7})
+	app = newModel.(*App)
+	if app.timezoneMode != "local" {
+		t.Fatalf("expected timezone local after f7, got %s", app.timezoneMode)
+	}
+	newModel, _ = app.Update(tea.KeyMsg{Type: tea.KeyF7})
+	app = newModel.(*App)
+	if app.timezoneMode != "utc" {
+		t.Fatalf("expected timezone utc after second f7, got %s", app.timezoneMode)
+	}
+}
+
+func TestShiftGJumpsToLastEntry(t *testing.T) {
+	state := &models.AppState{
+		IsReady: true,
+		LogListState: models.LogListState{
+			Logs: make([]models.LogEntry, 25),
+		},
+	}
+	for i := range state.LogListState.Logs {
+		state.LogListState.Logs[i] = models.LogEntry{ID: fmt.Sprintf("%d", i+1), Message: "x"}
+	}
+	app := NewApp(state)
+	newModel, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
+	app = newModel.(*App)
+	if got := app.currentSelectedIndex(); got != len(state.LogListState.Logs)-1 {
+		t.Fatalf("expected selected index at last entry, got %d", got)
+	}
+}
+
+func TestAppendOlderPreservesSelectedIndexAtBottom(t *testing.T) {
+	logs := make([]models.LogEntry, 200)
+	for i := range logs {
+		logs[i] = models.LogEntry{
+			ID:        fmt.Sprintf("%d", i+1),
+			Message:   fmt.Sprintf("log-%d", i+1),
+			Timestamp: time.Now().Add(-time.Duration(i) * time.Second),
+		}
+	}
+	state := &models.AppState{
+		IsReady: true,
+		LogListState: models.LogListState{
+			Logs: logs,
+		},
+	}
+	app := NewApp(state)
+	app.panes.LogList.scrollOffset = len(logs) - 1 // simulate user on last visible log
+	app.SetQueryExecutor(func(_ string) ([]models.LogEntry, error) {
+		older := make([]models.LogEntry, 20)
+		for i := range older {
+			older[i] = models.LogEntry{
+				ID:        fmt.Sprintf("n%d", i+1),
+				Message:   fmt.Sprintf("older-%d", i+1),
+				Timestamp: time.Now().Add(-time.Duration(1000+i) * time.Second),
+			}
+		}
+		return older, nil
+	})
+
+	_, cmd := app.handleScrollDown()
+	if cmd == nil {
+		t.Fatalf("expected append command when scrolling down at bottom")
+	}
+	msg := cmd()
+	newModel, _ := app.Update(msg)
+	app = newModel.(*App)
+
+	if got := app.currentSelectedIndex(); got != 199 {
+		t.Fatalf("expected selected index preserved at 199, got %d", got)
 	}
 }
 

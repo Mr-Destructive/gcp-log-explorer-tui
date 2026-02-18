@@ -223,7 +223,7 @@ func (qm *QueryModal) Render(width, height int) string {
 	if qm.selectAll {
 		sb.WriteString("┃ Selection: all query text\n")
 	}
-	sb.WriteString("┃ Enter run | Ctrl+A select all | Ctrl+/ comment | Ctrl+left/right word | Tab indent\n")
+	sb.WriteString("┃ Enter run | Ctrl+A all | Ctrl+/ comment | Ctrl+R history | Ctrl+left/right word\n")
 
 	return sb.String()
 }

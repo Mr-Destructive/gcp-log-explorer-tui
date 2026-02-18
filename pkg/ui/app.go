@@ -24,48 +24,50 @@ var (
 
 // App represents the main TUI application
 type App struct {
-	state              *models.AppState
-	width              int
-	height             int
-	panes              *Panes
-	lastErr            string
-	helpModal          *HelpModal
-	queryModal         *QueryModal
-	timePicker         *TimePicker
-	severityFilter     *SeverityFilterPanel
-	exporter           *Exporter
-	formatter          *LogFormatter
-	timelineBuilder    *TimelineBuilder
-	statusBar          string
-	queryExec          func(string) ([]models.LogEntry, error)
-	activeModalName    string // Track which modal is open
-	previousModalName  string
-	vimMode            bool
-	loadingOlder       bool
-	loadingNewer       bool
-	detailScroll       int
-	detailCursor       int
-	detailViewMode     string
-	detailTreeExpanded map[string]bool
-	severityCursor     int
-	autoLoadAll        bool
-	projectPopup       bool
-	projectCursor      int
-	availableProjects  []string
-	queryHistory       []string
-	queryHistoryCursor int
-	startupFilter      string
-	projectListFn      func() ([]string, error)
-	loadingProjects    bool
-	queryLibrary       []config.SavedQueryRecord
-	queryLibraryCursor int
-	queryCache         map[string]config.CachedQueryRecord
-	queryCacheTTL      time.Duration
-	queryCacheMax      int
-	bypassNextCache    bool
-	persistHistoryFn   func(filter, project string) error
-	persistLibraryFn   func([]config.SavedQueryRecord) error
-	persistCacheFn     func([]config.CachedQueryRecord) error
+	state                   *models.AppState
+	width                   int
+	height                  int
+	panes                   *Panes
+	lastErr                 string
+	helpModal               *HelpModal
+	queryModal              *QueryModal
+	timePicker              *TimePicker
+	severityFilter          *SeverityFilterPanel
+	exporter                *Exporter
+	formatter               *LogFormatter
+	timelineBuilder         *TimelineBuilder
+	statusBar               string
+	queryExec               func(string) ([]models.LogEntry, error)
+	activeModalName         string // Track which modal is open
+	previousModalName       string
+	vimMode                 bool
+	timezoneMode            string // "utc" or "local"
+	loadingOlder            bool
+	loadingNewer            bool
+	detailScroll            int
+	detailCursor            int
+	detailViewMode          string
+	detailTreeExpanded      map[string]bool
+	severityCursor          int
+	autoLoadAll             bool
+	projectPopup            bool
+	projectCursor           int
+	availableProjects       []string
+	queryHistory            []string
+	queryHistoryCursor      int
+	queryHistoryPopupCursor int
+	startupFilter           string
+	projectListFn           func() ([]string, error)
+	loadingProjects         bool
+	queryLibrary            []config.SavedQueryRecord
+	queryLibraryCursor      int
+	queryCache              map[string]config.CachedQueryRecord
+	queryCacheTTL           time.Duration
+	queryCacheMax           int
+	bypassNextCache         bool
+	persistHistoryFn        func(filter, project string) error
+	persistLibraryFn        func([]config.SavedQueryRecord) error
+	persistCacheFn          func([]config.CachedQueryRecord) error
 }
 
 type queryResultMsg struct {
@@ -100,48 +102,50 @@ func NewApp(appState *models.AppState) *App {
 	timelineBuilder := NewTimelineBuilder(5 * time.Minute)
 	availableProjects := collectProjects(appState.CurrentProject)
 	return &App{
-		state:              appState,
-		width:              120,
-		height:             40,
-		panes:              panes,
-		lastErr:            "",
-		helpModal:          helpModal,
-		queryModal:         queryModal,
-		timePicker:         timePicker,
-		severityFilter:     severityFilter,
-		exporter:           exporter,
-		formatter:          formatter,
-		timelineBuilder:    timelineBuilder,
-		statusBar:          helpModal.GetShortHelp(),
-		queryExec:          nil,
-		activeModalName:    "none",
-		previousModalName:  "none",
-		vimMode:            true,
-		loadingOlder:       false,
-		loadingNewer:       false,
-		detailScroll:       0,
-		detailCursor:       0,
-		detailViewMode:     "full",
-		detailTreeExpanded: map[string]bool{"$": true},
-		severityCursor:     0,
-		autoLoadAll:        false,
-		projectPopup:       false,
-		projectCursor:      0,
-		availableProjects:  availableProjects,
-		queryHistory:       []string{},
-		queryHistoryCursor: -1,
-		startupFilter:      "",
-		projectListFn:      nil,
-		loadingProjects:    false,
-		queryLibrary:       []config.SavedQueryRecord{},
-		queryLibraryCursor: 0,
-		queryCache:         map[string]config.CachedQueryRecord{},
-		queryCacheTTL:      15 * time.Minute,
-		queryCacheMax:      40,
-		bypassNextCache:    false,
-		persistHistoryFn:   nil,
-		persistLibraryFn:   nil,
-		persistCacheFn:     nil,
+		state:                   appState,
+		width:                   120,
+		height:                  40,
+		panes:                   panes,
+		lastErr:                 "",
+		helpModal:               helpModal,
+		queryModal:              queryModal,
+		timePicker:              timePicker,
+		severityFilter:          severityFilter,
+		exporter:                exporter,
+		formatter:               formatter,
+		timelineBuilder:         timelineBuilder,
+		statusBar:               helpModal.GetShortHelp(),
+		queryExec:               nil,
+		activeModalName:         "none",
+		previousModalName:       "none",
+		vimMode:                 true,
+		timezoneMode:            "utc",
+		loadingOlder:            false,
+		loadingNewer:            false,
+		detailScroll:            0,
+		detailCursor:            0,
+		detailViewMode:          "full",
+		detailTreeExpanded:      map[string]bool{"$": true},
+		severityCursor:          0,
+		autoLoadAll:             false,
+		projectPopup:            false,
+		projectCursor:           0,
+		availableProjects:       availableProjects,
+		queryHistory:            []string{},
+		queryHistoryCursor:      -1,
+		queryHistoryPopupCursor: 0,
+		startupFilter:           "",
+		projectListFn:           nil,
+		loadingProjects:         false,
+		queryLibrary:            []config.SavedQueryRecord{},
+		queryLibraryCursor:      0,
+		queryCache:              map[string]config.CachedQueryRecord{},
+		queryCacheTTL:           15 * time.Minute,
+		queryCacheMax:           40,
+		bypassNextCache:         false,
+		persistHistoryFn:        nil,
+		persistLibraryFn:        nil,
+		persistCacheFn:          nil,
 	}
 }
 
@@ -243,6 +247,25 @@ func (a *App) SetVimMode(enabled bool) {
 	a.vimMode = enabled
 }
 
+func (a *App) toggleTimezoneMode() {
+	if a.timezoneMode == "local" {
+		a.timezoneMode = "utc"
+		a.formatter.SetUseLocalTime(false)
+		a.lastErr = "Timezone: UTC"
+		return
+	}
+	a.timezoneMode = "local"
+	a.formatter.SetUseLocalTime(true)
+	a.lastErr = "Timezone: local"
+}
+
+func (a *App) displayTime(t time.Time) time.Time {
+	if a.timezoneMode == "local" {
+		return t.Local()
+	}
+	return t.UTC()
+}
+
 // SetQueryHistory sets initial query history (most recent first).
 func (a *App) SetQueryHistory(history []string) {
 	a.queryHistory = append([]string{}, history...)
@@ -323,7 +346,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				before := len(a.state.LogListState.Logs)
 				a.state.LogListState.Logs = mergeUniqueLogs(a.state.LogListState.Logs, msg.logs, false)
 				if msg.preserveAnchor {
-					a.panes.LogList.scrollOffset = msg.anchorOffset
+					a.panes.LogList.scrollOffset = minInt(maxInt(0, msg.anchorOffset), maxInt(0, len(a.state.LogListState.Logs)-1))
 				}
 				a.lastErr = fmt.Sprintf("Loaded older logs: +%d", len(a.state.LogListState.Logs)-before)
 			case "prepend":
@@ -459,6 +482,8 @@ func (a *App) View() string {
 		output = a.renderCenteredPopup(output, a.renderProjectDropdown())
 	case "queryLibrary":
 		output = a.renderCenteredPopup(output, a.renderQueryLibraryPopup())
+	case "queryHistory":
+		output = a.renderCenteredPopup(output, a.renderQueryHistoryPopup())
 	}
 
 	return output
@@ -559,6 +584,28 @@ func (a *App) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a.applySelectedQueryLibraryEntry()
 		}
 		return a, nil
+	case "queryHistory":
+		switch msg.String() {
+		case "esc":
+			a.activeModalName = a.previousModalName
+		case "j", "down", "ctrl+g":
+			if len(a.queryHistory) > 0 {
+				a.queryHistoryPopupCursor++
+				if a.queryHistoryPopupCursor >= len(a.queryHistory) {
+					a.queryHistoryPopupCursor = len(a.queryHistory) - 1
+				}
+			}
+		case "k", "up", "ctrl+r":
+			if len(a.queryHistory) > 0 {
+				a.queryHistoryPopupCursor--
+				if a.queryHistoryPopupCursor < 0 {
+					a.queryHistoryPopupCursor = 0
+				}
+			}
+		case "enter":
+			return a.applySelectedQueryHistoryEntry()
+		}
+		return a, nil
 	case "help":
 		// Help modal just dismisses on any key
 		if msg.String() == "esc" || msg.String() == "?" {
@@ -622,8 +669,7 @@ func (a *App) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.panes.LogList.JumpToTop()
 		return a, nil
 	case "end":
-		a.panes.LogList.JumpToBottom()
-		a.panes.LogList.scrollOffset = a.maxWindowStart()
+		a.jumpToLastLogEntry()
 		return a, nil
 	case "g":
 		if a.vimMode {
@@ -632,8 +678,7 @@ func (a *App) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	case "G":
 		if a.vimMode {
-			a.panes.LogList.JumpToBottom()
-			a.panes.LogList.scrollOffset = a.maxWindowStart()
+			a.jumpToLastLogEntry()
 		}
 		return a, nil
 
@@ -678,6 +723,9 @@ func (a *App) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			a.lastErr = "Key mode: standard"
 		}
+		return a, nil
+	case "f7":
+		a.toggleTimezoneMode()
 		return a, nil
 	case "ctrl+a":
 		a.autoLoadAll = !a.autoLoadAll
@@ -774,10 +822,10 @@ func (a *App) handleQueryModalInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.queryHistoryCursor = -1
 		return a, nil
 	case "ctrl+r":
-		a.cycleQueryHistory(-1)
+		a.openQueryHistoryModal("query")
 		return a, nil
 	case "ctrl+g":
-		a.cycleQueryHistory(1)
+		a.openQueryHistoryModal("query")
 		return a, nil
 	case "ctrl+y":
 		a.openQueryLibraryModal("query")
@@ -871,7 +919,7 @@ func (a *App) handleQueryModalInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (a *App) handleScrollDown() (tea.Model, tea.Cmd) {
 	wasAtBottom := a.currentWindowStart() >= a.maxWindowStart()
-	anchor := a.currentWindowStart()
+	anchor := a.currentSelectedIndex()
 	a.panes.LogList.ScrollDown()
 	if a.queryExec != nil && !a.loadingOlder && len(a.state.LogListState.Logs) > 0 && wasAtBottom {
 		a.loadingOlder = true
@@ -890,6 +938,15 @@ func (a *App) handleScrollUp() (tea.Model, tea.Cmd) {
 		return a, a.runQueryCmd(a.buildNewerFilter(), "prepend")
 	}
 	return a, nil
+}
+
+func (a *App) jumpToLastLogEntry() {
+	if len(a.state.LogListState.Logs) == 0 {
+		a.panes.LogList.scrollOffset = 0
+		return
+	}
+	// Keep selected row on the true last item, not at window start.
+	a.panes.LogList.scrollOffset = len(a.state.LogListState.Logs) - 1
 }
 
 // handleTimePickerInput handles input when time picker modal is active
@@ -1298,7 +1355,7 @@ func (a *App) renderGraphPanel() string {
 		if first.Before(last) {
 			first, last = last, first
 		}
-		rangeText = fmt.Sprintf("Range: %s -> %s", last.Format("2006-01-02 15:04:05"), first.Format("2006-01-02 15:04:05"))
+		rangeText = fmt.Sprintf("Range: %s -> %s", a.displayTime(last).Format("2006-01-02 15:04:05"), a.displayTime(first).Format("2006-01-02 15:04:05"))
 	}
 
 	var sb strings.Builder
@@ -1330,7 +1387,7 @@ func (a *App) renderLogsPanel(height int) (string, int, int) {
 
 	for i := start; i < end; i++ {
 		log := a.state.LogListState.Logs[i]
-		timePart := log.Timestamp.Format("2006-01-02 15:04:05")
+		timePart := a.displayTime(log.Timestamp).Format("2006-01-02 15:04:05")
 		sevBadge := a.styleSeverityBadge(log.Severity)
 		msgMax := maxInt(12, a.width-47)
 		msg := log.Message
@@ -1376,19 +1433,8 @@ func (a *App) renderQueryPanel(query string, editing bool) string {
 			sb.WriteString("┃ " + lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Render(line) + "\n")
 		}
 	}
-	hint := "Enter run | Ctrl+A select all | Ctrl+/ comment | Ctrl+S save | Ctrl+Y library"
+	hint := "Enter run | Ctrl+A all | Ctrl+/ comment | Ctrl+R history | Ctrl+S save | Ctrl+Y library"
 	sb.WriteString("┃ " + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(hint) + "\n")
-	if len(a.queryHistory) > 0 {
-		sb.WriteString("┃ " + lipgloss.NewStyle().Foreground(lipgloss.Color("111")).Render("Recent queries:") + "\n")
-		for i := 0; i < minInt(3, len(a.queryHistory)); i++ {
-			q := strings.ReplaceAll(a.queryHistory[i], "\n", " ↩ ")
-			q = strings.TrimSpace(q)
-			if len(q) > a.width-12 {
-				q = q[:a.width-15] + "..."
-			}
-			sb.WriteString("┃ " + lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Render(fmt.Sprintf("  %d) %s", i+1, q)) + "\n")
-		}
-	}
 	return sb.String()
 }
 
@@ -1412,8 +1458,9 @@ func (a *App) renderStatusPanel(windowStart, windowEnd int) string {
 	if a.vimMode {
 		keyMode = "vim"
 	}
-	sb.WriteString(fmt.Sprintf("┃ %d-%d/%d  %s  sev:%s  load:%s  stream:%s  keys:%s  cache:%d  ?\n",
-		windowStart, windowEnd, total, a.getTimeRangeLabel(), a.getSeveritySummary(), loadMode, streamMode, keyMode, len(a.cachedQueryRecords())))
+	tzMode := strings.ToUpper(a.timezoneMode)
+	sb.WriteString(fmt.Sprintf("┃ %d-%d/%d  %s  sev:%s  load:%s  stream:%s  keys:%s  tz:%s  cache:%d  ?\n",
+		windowStart, windowEnd, total, a.getTimeRangeLabel(), a.getSeveritySummary(), loadMode, streamMode, keyMode, tzMode, len(a.cachedQueryRecords())))
 	if a.lastErr != "" {
 		errLine := a.lastErr
 		if len(errLine) > a.width-4 {
@@ -1441,7 +1488,7 @@ func (a *App) renderTopBar() string {
 	if a.vimMode {
 		keys = "vim"
 	}
-	rightText := fmt.Sprintf("project:%s ▾  mode:%s  keys:%s", project, queryMode, keys)
+	rightText := fmt.Sprintf("project:%s ▾  mode:%s  keys:%s  tz:%s", project, queryMode, keys, strings.ToUpper(a.timezoneMode))
 	right := lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("31")).Padding(0, 1).Render(rightText)
 	fill := maxInt(0, a.width-lipgloss.Width(left)-lipgloss.Width(right))
 	return left + strings.Repeat(" ", fill) + right + "\n"
@@ -1616,7 +1663,7 @@ func (a *App) renderDetailPopup() string {
 		line := lines[i]
 		prefix := "  "
 		if i == selectedIndex {
-			prefix = "▸ "
+			prefix = "▶ "
 		}
 		if len(line) > a.width-4 {
 			line = line[:a.width-7] + "..."
@@ -1721,6 +1768,74 @@ func (a *App) openQueryLibraryModal(previous string) {
 	a.previousModalName = previous
 	a.activeModalName = "queryLibrary"
 	a.queryLibraryCursor = 0
+}
+
+func (a *App) openQueryHistoryModal(previous string) {
+	a.previousModalName = previous
+	a.activeModalName = "queryHistory"
+	a.queryHistoryPopupCursor = 0
+}
+
+func (a *App) renderQueryHistoryPopup() string {
+	var sb strings.Builder
+	popupWidth := minInt(maxInt(44, a.width-20), 120)
+	title := " QUERY HISTORY "
+	sb.WriteString("┏" + title + strings.Repeat("━", maxInt(0, popupWidth-len(title)-2)) + "\n")
+	if len(a.queryHistory) == 0 {
+		sb.WriteString("┃ No executed queries yet\n")
+		sb.WriteString("┣" + strings.Repeat("━", popupWidth-1) + "\n")
+		sb.WriteString("┃ Run a query first | Esc close\n")
+		return sb.String()
+	}
+	maxVisible := maxInt(6, a.height-14)
+	start := 0
+	if a.queryHistoryPopupCursor >= maxVisible {
+		start = a.queryHistoryPopupCursor - maxVisible + 1
+	}
+	end := minInt(len(a.queryHistory), start+maxVisible)
+	for i := start; i < end; i++ {
+		prefix := "  "
+		if i == a.queryHistoryPopupCursor {
+			prefix = "▶ "
+		}
+		queryLine := strings.ReplaceAll(strings.TrimSpace(a.queryHistory[i]), "\n", " ↩ ")
+		line := fmt.Sprintf("%s%d) %s", prefix, i+1, queryLine)
+		if len(line) > popupWidth-4 {
+			line = line[:popupWidth-7] + "..."
+		}
+		if i == a.queryHistoryPopupCursor {
+			line = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Render(line)
+		}
+		sb.WriteString("┃ " + line + "\n")
+	}
+	sb.WriteString("┣" + strings.Repeat("━", popupWidth-1) + "\n")
+	sb.WriteString(fmt.Sprintf("┃ %d-%d of %d | j/k or Ctrl+R/Ctrl+G | Enter apply | Esc close\n", start+1, end, len(a.queryHistory)))
+	return sb.String()
+}
+
+func (a *App) applySelectedQueryHistoryEntry() (tea.Model, tea.Cmd) {
+	if len(a.queryHistory) == 0 {
+		a.lastErr = "Query history is empty"
+		return a, nil
+	}
+	if a.queryHistoryPopupCursor < 0 {
+		a.queryHistoryPopupCursor = 0
+	}
+	if a.queryHistoryPopupCursor >= len(a.queryHistory) {
+		a.queryHistoryPopupCursor = len(a.queryHistory) - 1
+	}
+	selected := a.queryHistory[a.queryHistoryPopupCursor]
+	a.state.CurrentQuery.Filter = selected
+	if a.previousModalName == "query" {
+		a.activeModalName = "query"
+		a.queryModal.SetInput(selected)
+		return a, nil
+	}
+	a.activeModalName = "none"
+	if a.queryExec != nil {
+		return a, a.executePrimaryQueryCmd(a.buildEffectiveFilter(selected))
+	}
+	return a, nil
 }
 
 func (a *App) applySelectedQueryLibraryEntry() (tea.Model, tea.Cmd) {
@@ -2288,7 +2403,7 @@ func (a *App) currentJSONTreeLines() []jsonTreeLine {
 
 func (a *App) detailEntryJSONObject(entry models.LogEntry) map[string]interface{} {
 	root := map[string]interface{}{
-		"timestamp": entry.Timestamp.Format(time.RFC3339Nano),
+		"timestamp": a.displayTime(entry.Timestamp).Format(time.RFC3339Nano),
 		"severity":  entry.Severity,
 		"message":   entry.Message,
 	}

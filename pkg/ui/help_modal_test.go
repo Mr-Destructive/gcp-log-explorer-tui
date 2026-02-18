@@ -117,7 +117,7 @@ func TestHelpContentStructure(t *testing.T) {
 	// Check for key commands - looking for partial matches since styling may interfere
 	commands := []string{
 		"Open query editor",
-		"Previous / next query history",
+		"query history popup",
 		"Time range filter",
 		"Severity filter",
 		"selected log",
